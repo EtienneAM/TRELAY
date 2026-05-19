@@ -1,5 +1,5 @@
 /*
- * TLED - Matter-over-Thread LED Controller
+ * TRELAY - Matter-over-Thread Relay Controller
  * Main Application Entry Point
  */
 
@@ -39,10 +39,10 @@
 #define PROJECT_VER "unknown"
 #endif
 
-static const char *TAG = "tled_main";
+static const char *TAG = "trelay_main";
 
 // Global endpoint IDs
-uint16_t light_endpoint_id = 0;
+uint16_t relay_endpoint_id = 0;
 uint16_t temp_sensor_endpoint_id = 0;
 
 using namespace esp_matter;
@@ -229,7 +229,7 @@ extern "C" void app_main()
     esp_err_t err = ESP_OK;
 
     ESP_LOGI(TAG, "==================================");
-    ESP_LOGI(TAG, "TLED - Matter-over-Thread LED Controller");
+    ESP_LOGI(TAG, "TRELAY - Matter-over-Thread Relay Controller");
     ESP_LOGI(TAG, "Version: %s", PROJECT_VER);
     ESP_LOGI(TAG, "==================================");
 
@@ -264,11 +264,11 @@ extern "C" void app_main()
         ESP_LOGW(TAG, "Use nRF Connect to configure via BLE characteristics");
     }
 
-    ESP_LOGI(TAG, "Using config: %d LEDs on GPIO%d", config->num_leds, config->gpio_pin);
+    ESP_LOGI(TAG, "Using config: relay on GPIO%d", config->gpio_pin);
 
     /* Initialize drivers */
-    app_driver_handle_t light_handle = app_driver_light_init();
-    ABORT_APP_ON_FAILURE(light_handle != NULL, ESP_LOGE(TAG, "Failed to initialize light driver"));
+    app_driver_handle_t relay_handle = app_driver_light_init();
+    ABORT_APP_ON_FAILURE(relay_handle != NULL, ESP_LOGE(TAG, "Failed to initialize relay driver"));
 
     app_driver_handle_t button_handle = app_driver_button_init();
     ABORT_APP_ON_FAILURE(button_handle != NULL, ESP_LOGE(TAG, "Failed to initialize button driver"));
@@ -283,35 +283,16 @@ extern "C" void app_main()
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
 
-    /* Create Dimmable Light + HSV Color Control
-     * Using dimmable_light as base, then adding ColorControl with HSV only
-     * This avoids XY and ColorTemperature features that cause issues
-     */
-    dimmable_light::config_t light_config;
-    light_config.on_off.on_off = TLED_DEFAULT_POWER;
-    light_config.on_off_lighting.start_up_on_off = nullptr;
-    light_config.level_control.current_level = TLED_DEFAULT_BRIGHTNESS;
-    light_config.level_control.on_level = TLED_DEFAULT_BRIGHTNESS;
-    light_config.level_control_lighting.start_up_current_level = nullptr;
+    /* Create On/Off Plugin Unit endpoint (generic switchable outlet/relay) */
+    on_off_plugin_unit::config_t relay_config;
+    relay_config.on_off.on_off = TLED_DEFAULT_POWER;
+    relay_config.on_off_lighting.start_up_on_off = nullptr;
 
-    endpoint_t *endpoint = dimmable_light::create(node, &light_config, ENDPOINT_FLAG_NONE, light_handle);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create dimmable light endpoint"));
+    endpoint_t *endpoint = on_off_plugin_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, relay_handle);
+    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay endpoint"));
 
-    /* Add ColorControl cluster with HSV feature only */
-    cluster::color_control::config_t color_config;
-    color_config.color_mode = static_cast<uint8_t>(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
-    color_config.enhanced_color_mode = static_cast<uint8_t>(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
-    color_config.color_capabilities = 1;  // Hue/Saturation supported
-    cluster_t *color_cluster = cluster::color_control::create(endpoint, &color_config, CLUSTER_FLAG_SERVER);
-
-    /* Add only HSV feature */
-    cluster::color_control::feature::hue_saturation::config_t hs_config;
-    hs_config.current_hue = 0;
-    hs_config.current_saturation = 254;
-    cluster::color_control::feature::hue_saturation::add(color_cluster, &hs_config);
-
-    light_endpoint_id = endpoint::get_id(endpoint);
-    ESP_LOGI(TAG, "Color Light (HSV) created with endpoint_id %d", light_endpoint_id);
+    relay_endpoint_id = endpoint::get_id(endpoint);
+    ESP_LOGI(TAG, "On/Off Plugin Unit (relay) created with endpoint_id %d", relay_endpoint_id);
 
     /* Create Temperature Sensor endpoint to expose chip temperature */
     temperature_sensor::config_t temp_config;
@@ -346,8 +327,8 @@ extern "C" void app_main()
     /* Print commissioning QR code */
     PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
 
-    /* Apply default light settings from Matter attributes */
-    app_driver_light_set_defaults(light_endpoint_id);
+    /* Apply default relay settings (restore from NVS) */
+    app_driver_light_set_defaults(relay_endpoint_id);
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
@@ -369,7 +350,7 @@ extern "C" void app_main()
         ESP_LOGI(TAG, "Temperature update task started (interval: %dms)", TEMP_UPDATE_INTERVAL_MS);
     }
 
-    ESP_LOGI(TAG, "TLED initialization complete. Waiting for commissioning...");
+    ESP_LOGI(TAG, "TRELAY initialization complete. Waiting for commissioning...");
     ESP_LOGI(TAG, "Serial config available - connect via USB and type 'help'");
 
     /* Main loop - just idle, all work done in callbacks */

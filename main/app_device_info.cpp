@@ -1,5 +1,5 @@
 /*
- * TLED - Custom Device Instance Info Provider
+ * TRELAY - Custom Device Instance Info Provider
  * Sets proper device identification for Matter
  */
 
@@ -17,12 +17,12 @@ namespace tled {
 
 // Device identification constants
 static constexpr char kVendorName[] = "TLED";
-static constexpr char kProductName[] = "Matter LED Controller";
+static constexpr char kProductName[] = "Matter Relay Controller";
 static constexpr char kHardwareVersionString[] = "ESP32-C6";
 static constexpr char kProductURL[] = "https://github.com/maui1911/TLED";
-static constexpr char kProductLabel[] = "TLED";
+static constexpr char kProductLabel[] = "TRELAY";
 static constexpr uint16_t kVendorId = 0xFFF1;  // Test vendor ID
-static constexpr uint16_t kProductId = 0x8000;
+static constexpr uint16_t kProductId = 0x8001;
 static constexpr uint16_t kHardwareVersion = 1;
 
 CHIP_ERROR TLEDDeviceInstanceInfoProvider::GetVendorName(char * buf, size_t bufSize)

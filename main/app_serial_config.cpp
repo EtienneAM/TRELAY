@@ -1,5 +1,5 @@
-/*
- * TLED Serial Configuration
+﻿/*
+ * TRELAY Serial Configuration
  * Handles serial commands for runtime configuration
  */
 
@@ -48,11 +48,10 @@ static void serial_printf(const char *fmt, ...) {
 static void serial_config_task(void *arg) {
     uint8_t rx_buf[64];
 
-    // Print welcome message
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for USB to stabilize
+    vTaskDelay(pdMS_TO_TICKS(1000));
     serial_write("\r\n");
     serial_write("========================================\r\n");
-    serial_write("  TLED Serial Configuration\r\n");
+    serial_write("  TRELAY Serial Configuration\r\n");
     serial_write("  Type 'help' for available commands\r\n");
     serial_write("========================================\r\n");
     print_config();
@@ -67,7 +66,6 @@ static void serial_config_task(void *arg) {
             for (int i = 0; i < len; i++) {
                 char c = (char)rx_buf[i];
 
-                // Handle backspace
                 if (c == '\b' || c == 127) {
                     if (s_cmd_pos > 0) {
                         s_cmd_pos--;
@@ -76,7 +74,6 @@ static void serial_config_task(void *arg) {
                     continue;
                 }
 
-                // Handle enter
                 if (c == '\r' || c == '\n') {
                     serial_write("\r\n");
                     s_cmd_buf[s_cmd_pos] = '\0';
@@ -90,10 +87,8 @@ static void serial_config_task(void *arg) {
                     continue;
                 }
 
-                // Add character to buffer
                 if (s_cmd_pos < CMD_BUF_SIZE - 1 && c >= 32 && c < 127) {
                     s_cmd_buf[s_cmd_pos++] = c;
-                    // Echo character
                     char echo[2] = {c, '\0'};
                     serial_write(echo);
                 }
@@ -103,14 +98,12 @@ static void serial_config_task(void *arg) {
 }
 
 static void process_command(const char *cmd) {
-    // Skip leading whitespace
     while (*cmd == ' ') cmd++;
 
     if (strlen(cmd) == 0) {
         return;
     }
 
-    // Parse command
     char command[32] = {0};
     char param[32] = {0};
     char value[32] = {0};
@@ -149,7 +142,6 @@ static void process_command(const char *cmd) {
         tled_config_save();
         serial_write("Clearing Matter commissioning data...\r\n");
         vTaskDelay(pdMS_TO_TICKS(500));
-        // This clears fabric data and reboots
         esp_matter::factory_reset();
     }
     else {
@@ -163,11 +155,7 @@ static void print_help(void) {
     serial_write("Available commands:\r\n");
     serial_write("  help              - Show this help\r\n");
     serial_write("  config            - Show current configuration\r\n");
-    serial_write("  set leds <n>      - Set number of LEDs (1-1000)\r\n");
-    serial_write("  set gpio <n>      - Set data GPIO pin (0-21)\r\n");
-    serial_write("  set brightness <n> - Set max brightness (1-255)\r\n");
-    serial_write("  set type <t>      - Set LED type: ws2812b, ws2811, sk6812\r\n");
-    serial_write("  set order <o>     - Set RGB order: grb, rgb, brg, rbg, bgr, gbr\r\n");
+    serial_write("  set gpio <n>      - Set relay GPIO pin (0-23)\r\n");
     serial_write("  set name <name>   - Set device name\r\n");
     serial_write("  set poweron <m>   - Power-on behavior: restore, on, off\r\n");
     serial_write("  save              - Save config and reboot\r\n");
@@ -179,23 +167,6 @@ static void print_help(void) {
 static void print_config(void) {
     const tled_config_t *cfg = tled_config_get();
 
-    const char *type_str = "unknown";
-    switch (cfg->chipset) {
-        case 0: type_str = "ws2812b"; break;
-        case 1: type_str = "ws2811"; break;
-        case 2: type_str = "sk6812"; break;
-    }
-
-    const char *order_str = "unknown";
-    switch (cfg->rgb_order) {
-        case RGB_ORDER_GRB: order_str = "grb"; break;
-        case RGB_ORDER_RGB: order_str = "rgb"; break;
-        case RGB_ORDER_BRG: order_str = "brg"; break;
-        case RGB_ORDER_RBG: order_str = "rbg"; break;
-        case RGB_ORDER_BGR: order_str = "bgr"; break;
-        case RGB_ORDER_GBR: order_str = "gbr"; break;
-    }
-
     const char *poweron_str = "unknown";
     switch (cfg->power_on_behavior) {
         case POWER_ON_RESTORE: poweron_str = "restore"; break;
@@ -204,11 +175,7 @@ static void print_config(void) {
     }
 
     serial_write("\r\nCurrent configuration:\r\n");
-    serial_printf("  leds       = %d\r\n", cfg->num_leds);
     serial_printf("  gpio       = %d\r\n", cfg->gpio_pin);
-    serial_printf("  brightness = %d\r\n", cfg->max_brightness);
-    serial_printf("  type       = %s\r\n", type_str);
-    serial_printf("  order      = %s\r\n", order_str);
     serial_printf("  poweron    = %s\r\n", poweron_str);
     serial_printf("  name       = %s\r\n", cfg->device_name);
     serial_write("\r\n");
@@ -217,68 +184,13 @@ static void print_config(void) {
 static void handle_set_command(const char *param, const char *value) {
     tled_config_t *cfg = tled_config_get_mutable();
 
-    if (strcmp(param, "leds") == 0) {
-        int n = atoi(value);
-        if (n >= 1 && n <= 1000) {
-            cfg->num_leds = n;
-            serial_printf("Set leds = %d\r\n", n);
-        } else {
-            serial_write("Error: leds must be 1-1000\r\n");
-        }
-    }
-    else if (strcmp(param, "gpio") == 0) {
+    if (strcmp(param, "gpio") == 0) {
         int n = atoi(value);
         if (tled_config_validate_gpio((uint8_t)n)) {
             cfg->gpio_pin = n;
             serial_printf("Set gpio = %d\r\n", n);
         } else {
             serial_write("Error: invalid GPIO pin (avoid 9, 12-13, 15)\r\n");
-        }
-    }
-    else if (strcmp(param, "brightness") == 0) {
-        int n = atoi(value);
-        if (n >= 1 && n <= 255) {
-            cfg->max_brightness = n;
-            serial_printf("Set brightness = %d\r\n", n);
-        } else {
-            serial_write("Error: brightness must be 1-255\r\n");
-        }
-    }
-    else if (strcmp(param, "type") == 0) {
-        if (strcmp(value, "ws2812b") == 0) {
-            cfg->chipset = 0;
-            serial_write("Set type = ws2812b\r\n");
-        } else if (strcmp(value, "ws2811") == 0) {
-            cfg->chipset = 1;
-            serial_write("Set type = ws2811\r\n");
-        } else if (strcmp(value, "sk6812") == 0) {
-            cfg->chipset = 2;
-            serial_write("Set type = sk6812\r\n");
-        } else {
-            serial_write("Error: type must be ws2812b, ws2811, or sk6812\r\n");
-        }
-    }
-    else if (strcmp(param, "order") == 0) {
-        if (strcmp(value, "grb") == 0) {
-            cfg->rgb_order = RGB_ORDER_GRB;
-            serial_write("Set order = grb\r\n");
-        } else if (strcmp(value, "rgb") == 0) {
-            cfg->rgb_order = RGB_ORDER_RGB;
-            serial_write("Set order = rgb\r\n");
-        } else if (strcmp(value, "brg") == 0) {
-            cfg->rgb_order = RGB_ORDER_BRG;
-            serial_write("Set order = brg\r\n");
-        } else if (strcmp(value, "rbg") == 0) {
-            cfg->rgb_order = RGB_ORDER_RBG;
-            serial_write("Set order = rbg\r\n");
-        } else if (strcmp(value, "bgr") == 0) {
-            cfg->rgb_order = RGB_ORDER_BGR;
-            serial_write("Set order = bgr\r\n");
-        } else if (strcmp(value, "gbr") == 0) {
-            cfg->rgb_order = RGB_ORDER_GBR;
-            serial_write("Set order = gbr\r\n");
-        } else {
-            serial_write("Error: order must be grb, rgb, brg, rbg, bgr, or gbr\r\n");
         }
     }
     else if (strcmp(param, "name") == 0) {
@@ -307,7 +219,6 @@ static void handle_set_command(const char *param, const char *value) {
 }
 
 esp_err_t serial_config_init(void) {
-    // Configure USB Serial JTAG
     usb_serial_jtag_driver_config_t cfg = {
         .tx_buffer_size = SERIAL_BUF_SIZE,
         .rx_buffer_size = SERIAL_BUF_SIZE,
@@ -319,7 +230,6 @@ esp_err_t serial_config_init(void) {
         return err;
     }
 
-    // Create the serial config task
     BaseType_t ret = xTaskCreate(
         serial_config_task,
         "serial_config",

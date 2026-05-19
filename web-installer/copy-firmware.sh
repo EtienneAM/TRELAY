@@ -31,11 +31,11 @@ else
     echo "  ! ota_data_initial.bin not found"
 fi
 
-if [ -f "$BUILD_DIR/tled.bin" ]; then
-    cp "$BUILD_DIR/tled.bin" "$SCRIPT_DIR/firmware/"
-    echo "  - tled.bin"
+if [ -f "$BUILD_DIR/trelay.bin" ]; then
+    cp "$BUILD_DIR/trelay.bin" "$SCRIPT_DIR/firmware/"
+    echo "  - trelay.bin"
 else
-    echo "  ! tled.bin not found"
+    echo "  ! trelay.bin not found"
 fi
 
 echo ""
