@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TLED - Matter-over-Thread LED Controller</title>
+    <title>TRELAY - Matter-over-Thread Relay Controller</title>
     <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -117,7 +117,7 @@
         }
 
         .logo::before {
-            content: 'TLED';
+            content: 'TRELAY';
             position: absolute;
             top: 0;
             left: 0;
@@ -831,9 +831,9 @@
     <div class="container">
         <header>
             <div class="logo-container">
-                <div class="logo">TLED<span class="version-badge">v0.7.1</span></div>
+                <div class="logo">TRELAY<span class="version-badge">v0.1.0</span></div>
             </div>
-            <p class="tagline">Matter <span>+</span> Thread <span>+</span> LEDs</p>
+            <p class="tagline">Matter <span>+</span> Thread <span>+</span> Relay</p>
         </header>
 
         <div class="tabs">
@@ -870,7 +870,7 @@
                     <h3>Flash Firmware to ESP32-C6</h3>
                     <p>Connect your board via USB and click below. Works directly in Chrome or Edge - no software install needed.</p>
                     <esp-web-install-button manifest="manifest.json">
-                        <button slot="activate">Install TLED</button>
+                        <button slot="activate">Install TRELAY</button>
                         <span slot="unsupported">Web Serial not supported. Use Chrome or Edge on desktop.</span>
                         <span slot="not-allowed">Serial access blocked. Ensure you're using HTTPS.</span>
                     </esp-web-install-button>
@@ -886,11 +886,11 @@
                     </div>
                     <div class="step">
                         <span class="step-num">2</span>
-                        <span class="step-text">Set your <strong>LED count</strong>, <strong>GPIO pin</strong>, and strip type</span>
+                        <span class="step-text">Set the <strong>relay GPIO pin</strong> to match your wiring</span>
                     </div>
                     <div class="step">
                         <span class="step-num">3</span>
-                        <span class="step-text">Click <strong>Save & Reboot</strong> to apply settings</span>
+                        <span class="step-text">Click <strong>Save &amp; Reboot</strong> to apply settings</span>
                     </div>
                     <div class="step">
                         <span class="step-num">4</span>
@@ -924,47 +924,16 @@
             </div>
 
             <div class="card">
-                <h2>LED Configuration</h2>
+                <h2>Relay Configuration</h2>
                 <div class="config-grid">
-                    <div class="config-row">
-                        <div class="config-item">
-                            <label for="numLeds">Number of LEDs</label>
-                            <input type="number" id="numLeds" min="1" max="1000" value="10">
-                        </div>
-                        <div class="config-item">
-                            <label for="gpioPin">GPIO Pin</label>
-                            <input type="number" id="gpioPin" min="0" max="21" value="5">
-                        </div>
-                    </div>
-
-                    <div class="config-row">
-                        <div class="config-item">
-                            <label for="ledType">LED Type</label>
-                            <select id="ledType">
-                                <option value="ws2812b">WS2812B</option>
-                                <option value="ws2811">WS2811</option>
-                                <option value="sk6812">SK6812 (RGBW)</option>
-                            </select>
-                        </div>
-                        <div class="config-item">
-                            <label for="rgbOrder">Color Order</label>
-                            <select id="rgbOrder">
-                                <option value="grb">GRB</option>
-                                <option value="rgb">RGB</option>
-                                <option value="bgr">BGR</option>
-                                <option value="rbg">RBG</option>
-                            </select>
-                        </div>
-                    </div>
-
                     <div class="config-item">
-                        <label for="maxBrightness">Max Brightness (1-255)</label>
-                        <input type="number" id="maxBrightness" min="1" max="255" value="255">
+                        <label for="gpioPin">GPIO Pin</label>
+                        <input type="number" id="gpioPin" min="0" max="23" value="5">
                     </div>
 
                     <div class="btn-row">
                         <button id="saveBtn" class="btn btn-success" disabled>Save</button>
-                        <button id="saveRebootBtn" class="btn btn-success" disabled>Save & Reboot</button>
+                        <button id="saveRebootBtn" class="btn btn-success" disabled>Save &amp; Reboot</button>
                     </div>
                 </div>
             </div>
@@ -988,9 +957,9 @@
         <!-- Help Tab -->
         <div id="help" class="tab-content">
             <div class="card">
-                <h2>What is TLED?</h2>
+                <h2>What is TRELAY?</h2>
                 <div class="help-section">
-                    <p>TLED turns an ESP32-C6 into a smart LED controller using <strong>Matter over Thread</strong>. Control WS2812B, SK6812, and similar strips through Home Assistant, Apple Home, or Google Home.</p>
+                    <p>TRELAY turns an ESP32-C6 into a smart relay controller using <strong>Matter over Thread</strong>. Control any relay, switch, or load through Home Assistant, Apple Home, or Google Home.</p>
                     <div class="features">
                         <div class="feature">
                             <span class="feature-icon">&#x1F310;</span>
@@ -1041,7 +1010,7 @@
                 <h2>Configuration Options</h2>
                 <div class="help-section">
                     <p><strong>Number of LEDs</strong> - Total LEDs in your strip (1-1000)</p>
-                    <p><strong>GPIO Pin</strong> - Data pin for the LED strip. GPIO 5 works on most ESP32-C6 boards.</p>
+                    <p><strong>GPIO Pin</strong> - Control pin for the relay module. GPIO 5 works on most ESP32-C6 boards.</p>
                     <p><strong>LED Type</strong></p>
                     <ul>
                         <li><code>WS2812B</code> - Most common, 800kHz</li>
@@ -1113,7 +1082,7 @@
     </div>
 
     <footer>
-        <p>TLED is open source &middot; <a href="https://github.com/maui1911/TLED" target="_blank">GitHub</a></p>
+        <p>TRELAY is open source &middot; <a href="https://github.com/maui1911/TLED" target="_blank">GitHub</a></p>
     </footer>
 
     <script>
@@ -1269,20 +1238,8 @@
                 if (match) {
                     const [, key, value] = match;
                     switch (key) {
-                        case 'leds':
-                            document.getElementById('numLeds').value = value.trim();
-                            break;
                         case 'gpio':
                             document.getElementById('gpioPin').value = value.trim();
-                            break;
-                        case 'brightness':
-                            document.getElementById('maxBrightness').value = value.trim();
-                            break;
-                        case 'type':
-                            document.getElementById('ledType').value = value.trim();
-                            break;
-                        case 'order':
-                            document.getElementById('rgbOrder').value = value.trim();
                             break;
                     }
                 }
@@ -1298,21 +1255,9 @@
         });
 
         saveBtn.addEventListener('click', async () => {
-            const numLeds = document.getElementById('numLeds').value;
             const gpioPin = document.getElementById('gpioPin').value;
-            const ledType = document.getElementById('ledType').value;
-            const rgbOrder = document.getElementById('rgbOrder').value;
-            const maxBrightness = document.getElementById('maxBrightness').value;
 
-            await sendCommand(`set leds ${numLeds}`);
-            await new Promise(r => setTimeout(r, 100));
             await sendCommand(`set gpio ${gpioPin}`);
-            await new Promise(r => setTimeout(r, 100));
-            await sendCommand(`set type ${ledType}`);
-            await new Promise(r => setTimeout(r, 100));
-            await sendCommand(`set order ${rgbOrder}`);
-            await new Promise(r => setTimeout(r, 100));
-            await sendCommand(`set brightness ${maxBrightness}`);
             await new Promise(r => setTimeout(r, 100));
             await sendCommand('save');
         });
@@ -1326,21 +1271,9 @@
         });
 
         saveRebootBtn.addEventListener('click', async () => {
-            const numLeds = document.getElementById('numLeds').value;
             const gpioPin = document.getElementById('gpioPin').value;
-            const ledType = document.getElementById('ledType').value;
-            const rgbOrder = document.getElementById('rgbOrder').value;
-            const maxBrightness = document.getElementById('maxBrightness').value;
 
-            await sendCommand(`set leds ${numLeds}`);
-            await new Promise(r => setTimeout(r, 100));
             await sendCommand(`set gpio ${gpioPin}`);
-            await new Promise(r => setTimeout(r, 100));
-            await sendCommand(`set type ${ledType}`);
-            await new Promise(r => setTimeout(r, 100));
-            await sendCommand(`set order ${rgbOrder}`);
-            await new Promise(r => setTimeout(r, 100));
-            await sendCommand(`set brightness ${maxBrightness}`);
             await new Promise(r => setTimeout(r, 100));
             await sendCommand('save');
             await new Promise(r => setTimeout(r, 200));
