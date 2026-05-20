@@ -1,5 +1,5 @@
 /*
- * TLED - Matter-over-Thread LED Controller
+ * TRELAY - Matter-over-Thread Relay Controller
  * BLE Configuration Service Implementation
  */
 
@@ -21,40 +21,28 @@
 #include <nimble/nimble_port.h>
 #include <nimble/nimble_port_freertos.h>
 
-static const char *TAG = "tled_ble_cfg";
+static const char *TAG = "trelay_ble_cfg";
 
-// BLE UUIDs - Unique to TLED project
+// BLE UUIDs - Unique to TRELAY project
 // Service UUID: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b00
 static const ble_uuid128_t tled_svc_uuid =
     BLE_UUID128_INIT(0x00, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
                      0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
 
 // Characteristic UUIDs (same base, different last byte)
-// LED Count: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b01
-static const ble_uuid128_t chr_led_count_uuid =
+// GPIO Pin:          a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b01
+static const ble_uuid128_t chr_gpio_pin_uuid =
     BLE_UUID128_INIT(0x01, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
                      0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
-// GPIO Pin: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b02
-static const ble_uuid128_t chr_gpio_pin_uuid =
+// Power-on behavior: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b02
+static const ble_uuid128_t chr_power_on_uuid =
     BLE_UUID128_INIT(0x02, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
                      0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
-// RGB Order: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b03
-static const ble_uuid128_t chr_rgb_order_uuid =
+// Device Name:       a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b03
+static const ble_uuid128_t chr_dev_name_uuid =
     BLE_UUID128_INIT(0x03, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
                      0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
-// Chipset: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b04
-static const ble_uuid128_t chr_chipset_uuid =
-    BLE_UUID128_INIT(0x04, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
-                     0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
-// Max Brightness: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b05
-static const ble_uuid128_t chr_max_bri_uuid =
-    BLE_UUID128_INIT(0x05, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
-                     0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
-// Device Name: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1b06
-static const ble_uuid128_t chr_dev_name_uuid =
-    BLE_UUID128_INIT(0x06, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
-                     0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
-// Save & Reboot: a1e8d550-a72f-4c89-b5fc-4e3f6d2c1bff
+// Save & Reboot:     a1e8d550-a72f-4c89-b5fc-4e3f6d2c1bff
 static const ble_uuid128_t chr_save_uuid =
     BLE_UUID128_INIT(0xff, 0x1b, 0x2c, 0x6d, 0x3f, 0x4e, 0xfc, 0xb5,
                      0x89, 0x4c, 0x2f, 0xa7, 0x50, 0xd5, 0xe8, 0xa1);
@@ -68,12 +56,9 @@ static EventGroupHandle_t s_event_group = NULL;
 #define EVT_CONFIG_SAVED BIT0
 #define EVT_TIMEOUT      BIT1
 
-// Temporary config values (staged before save)
-static uint16_t s_staged_led_count;
+// Staged config values (held before save)
 static uint8_t s_staged_gpio_pin;
-static uint8_t s_staged_rgb_order;
-static uint8_t s_staged_chipset;
-static uint8_t s_staged_max_bri;
+static uint8_t s_staged_power_on;
 static char s_staged_dev_name[32];
 
 // Forward declarations
@@ -88,39 +73,21 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
         .uuid = &tled_svc_uuid.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
             {
-                .uuid = &chr_led_count_uuid.u,
+                .uuid = &chr_gpio_pin_uuid.u,
                 .access_cb = gatt_chr_access,
                 .arg = (void*)1,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
             },
             {
-                .uuid = &chr_gpio_pin_uuid.u,
+                .uuid = &chr_power_on_uuid.u,
                 .access_cb = gatt_chr_access,
                 .arg = (void*)2,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
             },
             {
-                .uuid = &chr_rgb_order_uuid.u,
-                .access_cb = gatt_chr_access,
-                .arg = (void*)3,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
-            },
-            {
-                .uuid = &chr_chipset_uuid.u,
-                .access_cb = gatt_chr_access,
-                .arg = (void*)4,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
-            },
-            {
-                .uuid = &chr_max_bri_uuid.u,
-                .access_cb = gatt_chr_access,
-                .arg = (void*)5,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
-            },
-            {
                 .uuid = &chr_dev_name_uuid.u,
                 .access_cb = gatt_chr_access,
-                .arg = (void*)6,
+                .arg = (void*)3,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
             },
             {
@@ -144,22 +111,13 @@ static int gatt_chr_access(uint16_t conn_handle, uint16_t attr_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
         switch (chr_id) {
-            case 1: // LED Count (uint16)
-                rc = os_mbuf_append(ctxt->om, &s_staged_led_count, sizeof(s_staged_led_count));
-                break;
-            case 2: // GPIO Pin (uint8)
+            case 1: // GPIO Pin (uint8)
                 rc = os_mbuf_append(ctxt->om, &s_staged_gpio_pin, sizeof(s_staged_gpio_pin));
                 break;
-            case 3: // RGB Order (uint8)
-                rc = os_mbuf_append(ctxt->om, &s_staged_rgb_order, sizeof(s_staged_rgb_order));
+            case 2: // Power-on behavior (uint8)
+                rc = os_mbuf_append(ctxt->om, &s_staged_power_on, sizeof(s_staged_power_on));
                 break;
-            case 4: // Chipset (uint8)
-                rc = os_mbuf_append(ctxt->om, &s_staged_chipset, sizeof(s_staged_chipset));
-                break;
-            case 5: // Max Brightness (uint8)
-                rc = os_mbuf_append(ctxt->om, &s_staged_max_bri, sizeof(s_staged_max_bri));
-                break;
-            case 6: // Device Name (string)
+            case 3: // Device Name (string)
                 rc = os_mbuf_append(ctxt->om, s_staged_dev_name, strlen(s_staged_dev_name));
                 break;
             default:
@@ -172,16 +130,7 @@ static int gatt_chr_access(uint16_t conn_handle, uint16_t attr_handle,
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
 
         switch (chr_id) {
-            case 1: { // LED Count (uint16)
-                if (len != 2) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-                uint16_t val;
-                os_mbuf_copydata(ctxt->om, 0, 2, &val);
-                if (val == 0 || val > 1000) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-                s_staged_led_count = val;
-                ESP_LOGI(TAG, "Staged LED count: %d", val);
-                break;
-            }
-            case 2: { // GPIO Pin (uint8)
+            case 1: { // GPIO Pin (uint8)
                 if (len != 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
                 uint8_t val;
                 os_mbuf_copydata(ctxt->om, 0, 1, &val);
@@ -190,33 +139,16 @@ static int gatt_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                 ESP_LOGI(TAG, "Staged GPIO pin: %d", val);
                 break;
             }
-            case 3: { // RGB Order (uint8)
-                if (len != 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-                uint8_t val;
-                os_mbuf_copydata(ctxt->om, 0, 1, &val);
-                if (val > 5) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-                s_staged_rgb_order = val;
-                ESP_LOGI(TAG, "Staged RGB order: %d", val);
-                break;
-            }
-            case 4: { // Chipset (uint8)
+            case 2: { // Power-on behavior (uint8)
                 if (len != 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
                 uint8_t val;
                 os_mbuf_copydata(ctxt->om, 0, 1, &val);
                 if (val > 2) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-                s_staged_chipset = val;
-                ESP_LOGI(TAG, "Staged chipset: %d", val);
+                s_staged_power_on = val;
+                ESP_LOGI(TAG, "Staged power-on behavior: %d", val);
                 break;
             }
-            case 5: { // Max Brightness (uint8)
-                if (len != 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-                uint8_t val;
-                os_mbuf_copydata(ctxt->om, 0, 1, &val);
-                s_staged_max_bri = val;
-                ESP_LOGI(TAG, "Staged max brightness: %d", val);
-                break;
-            }
-            case 6: { // Device Name (string)
+            case 3: { // Device Name (string)
                 if (len == 0 || len > 31) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
                 os_mbuf_copydata(ctxt->om, 0, len, s_staged_dev_name);
                 s_staged_dev_name[len] = '\0';
@@ -229,23 +161,18 @@ static int gatt_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                 os_mbuf_copydata(ctxt->om, 0, 1, &val);
                 if (val == 1) {
                     ESP_LOGI(TAG, "Save requested - applying config");
-                    esp_err_t err = tled_config_set(
-                        s_staged_led_count,
-                        s_staged_gpio_pin,
-                        s_staged_rgb_order,
-                        s_staged_chipset,
-                        s_staged_max_bri,
-                        s_staged_dev_name
-                    );
+                    tled_config_t *cfg = tled_config_get_mutable();
+                    cfg->gpio_pin = s_staged_gpio_pin;
+                    cfg->power_on_behavior = s_staged_power_on;
+                    strncpy(cfg->device_name, s_staged_dev_name, sizeof(cfg->device_name) - 1);
+                    cfg->device_name[sizeof(cfg->device_name) - 1] = '\0';
+                    esp_err_t err = tled_config_save();
                     if (err == ESP_OK) {
-                        err = tled_config_save();
-                        if (err == ESP_OK) {
-                            s_config_saved = true;
-                            if (s_event_group) {
-                                xEventGroupSetBits(s_event_group, EVT_CONFIG_SAVED);
-                            }
-                            ESP_LOGI(TAG, "Config saved! Will reboot...");
+                        s_config_saved = true;
+                        if (s_event_group) {
+                            xEventGroupSetBits(s_event_group, EVT_CONFIG_SAVED);
                         }
+                        ESP_LOGI(TAG, "Config saved! Will reboot...");
                     }
                 }
                 break;
@@ -303,7 +230,7 @@ static void ble_advertise(void)
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
     // Set device name
-    const char *name = "TLED-Config";
+    const char *name = "TRELAY-Config";
     fields.name = (uint8_t *)name;
     fields.name_len = strlen(name);
     fields.name_is_complete = 1;
@@ -325,7 +252,7 @@ static void ble_advertise(void)
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to start advertising: %d", rc);
     } else {
-        ESP_LOGI(TAG, "Advertising as 'TLED-Config'");
+        ESP_LOGI(TAG, "Advertising as 'TRELAY-Config'");
     }
 }
 
@@ -360,11 +287,8 @@ esp_err_t tled_ble_config_start(uint32_t timeout_ms)
 
     // Initialize staged values from current config
     const tled_config_t *cfg = tled_config_get();
-    s_staged_led_count = cfg->num_leds;
     s_staged_gpio_pin = cfg->gpio_pin;
-    s_staged_rgb_order = cfg->rgb_order;
-    s_staged_chipset = cfg->chipset;
-    s_staged_max_bri = cfg->max_brightness;
+    s_staged_power_on = cfg->power_on_behavior;
     strncpy(s_staged_dev_name, cfg->device_name, sizeof(s_staged_dev_name) - 1);
     s_staged_dev_name[sizeof(s_staged_dev_name) - 1] = '\0';
 
