@@ -1,4 +1,4 @@
-﻿menu "TRELAY Configuration"
+menu "TRELAY Configuration"
 
     config TRELAY_GPIO_PIN
         int "Relay GPIO pin"

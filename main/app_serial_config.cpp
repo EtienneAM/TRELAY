@@ -1,4 +1,4 @@
-﻿/*
+/*
  * TRELAY Serial Configuration
  * Handles serial commands for runtime configuration
  */

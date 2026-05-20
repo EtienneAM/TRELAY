@@ -1,4 +1,4 @@
-﻿/*
+/*
  * TRELAY - Matter-over-Thread Relay Controller
  * Relay Driver Implementation
  */

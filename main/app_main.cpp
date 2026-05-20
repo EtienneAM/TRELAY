@@ -284,11 +284,11 @@ extern "C" void app_main()
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
 
     /* Create On/Off Plugin Unit endpoint (generic switchable outlet/relay) */
-    on_off_plugin_unit::config_t relay_config;
+    on_off_plug_in_unit::config_t relay_config;
     relay_config.on_off.on_off = TLED_DEFAULT_POWER;
     relay_config.on_off_lighting.start_up_on_off = nullptr;
 
-    endpoint_t *endpoint = on_off_plugin_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, relay_handle);
+    endpoint_t *endpoint = on_off_plug_in_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, relay_handle);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay endpoint"));
 
     relay_endpoint_id = endpoint::get_id(endpoint);
