@@ -4,7 +4,7 @@ A Matter-compatible relay controller for ESP32-C6 that works over Thread network
 
 Originally designed as a **door buzzer controller**: commission it as a Door Lock, press Unlock in Home Assistant, the relay energizes for a few seconds, then automatically re-locks.
 
-> **Disclaimer:** This entire firmware was written by AI ([Claude](https://claude.ai) by Anthropic). I ([@maui1911](https://github.com/maui1911)) have not read or written a single line of code — I only provided direction, tested on real hardware, and deployed. Use at your own risk.
+> **Disclaimer:** This entire firmware was written by AI ([Claude](https://claude.ai) by Anthropic). I ([@EtienneAM](https://github.com/EtienneAM)) have not written a single line of code — I only provided direction, built the firware, tested on real hardware, and deployed. Use at your own risk.
 
 ## Features
 
@@ -21,12 +21,12 @@ Originally designed as a **door buzzer controller**: commission it as a Door Loc
 
 ## Hardware
 
-Developed for the **[DFRobot Beetle ESP32-C6](https://wiki.dfrobot.com/SKU_DFR1117_Beetle_ESP32_C6)** — a tiny 25 × 20.5 mm board. Any ESP32-C6 board works.
+Developed and tested for the **[Waveshare ESP32-C6-DEV-KIT-N8](https://docs.waveshare.com/ESP32-C6-DEV-KIT-N8)**. Any ESP32-C6 board works.
 
 ### Requirements
 
-- **ESP32-C6 board** - DFRobot Beetle ESP32-C6 recommended (or any ESP32-C6)
-- **Relay module** - Any 3.3 V or 5 V trigger relay (active-high or active-low)
+- **ESP32-C6 board** - Any ESP32-C6, I used the **[Waveshare ESP32-C6-DEV-KIT-N8](https://docs.waveshare.com/ESP32-C6-DEV-KIT-N8)**
+- **Relay module** - Any 3.3 V or 5 V trigger relay (active-high or active-low). I used the **[Adafruit Non-Latching Mini Relay FeatherWing](https://www.adafruit.com/product/2895)**
 - **Power supply** - 5 V for the board; relay coil power as required by your module
 - **Thread border router** - HomePod Mini, Apple TV 4K, Google Nest Hub, or a dedicated border router (SLZB-06, SMLight, etc.)
 
