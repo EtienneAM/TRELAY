@@ -50,6 +50,13 @@ using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
+// Required cluster init callback when DoorLock endpoint is used.
+// esp-matter legacy layer references this symbol at link time.
+void emberAfDoorLockClusterInitCallback(chip::EndpointId endpoint)
+{
+    ESP_LOGI(TAG, "DoorLock cluster init on endpoint %d", endpoint);
+}
+
 constexpr auto k_timeout_seconds = 300;
 
 // Temperature update interval (5 seconds)
@@ -283,16 +290,30 @@ extern "C" void app_main()
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
 
-    /* Create On/Off Plugin Unit endpoint (generic switchable outlet/relay) */
-    on_off_plug_in_unit::config_t relay_config;
-    relay_config.on_off.on_off = TLED_DEFAULT_POWER;
-    relay_config.on_off_lighting.start_up_on_off = nullptr;
+    /* Create relay endpoint based on configured device type */
+    const tled_config_t *relay_cfg = tled_config_get();
 
-    endpoint_t *endpoint = on_off_plug_in_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, relay_handle);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay endpoint"));
+    if (relay_cfg->device_type == DEVICE_TYPE_DOOR_LOCK) {
+        door_lock::config_t dl_config;
+        dl_config.door_lock.lock_state = nullable<uint8_t>(1); // Start locked
 
-    relay_endpoint_id = endpoint::get_id(endpoint);
-    ESP_LOGI(TAG, "On/Off Plugin Unit (relay) created with endpoint_id %d", relay_endpoint_id);
+        endpoint_t *endpoint = door_lock::create(node, &dl_config, ENDPOINT_FLAG_NONE, relay_handle);
+        ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
+
+        relay_endpoint_id = endpoint::get_id(endpoint);
+        ESP_LOGI(TAG, "Door Lock endpoint created with endpoint_id %d", relay_endpoint_id);
+    } else {
+        /* Default: Generic On/Off Plug-in Unit (switch/outlet) */
+        on_off_plug_in_unit::config_t relay_config;
+        relay_config.on_off.on_off = TLED_DEFAULT_POWER;
+        relay_config.on_off_lighting.start_up_on_off = nullptr;
+
+        endpoint_t *endpoint = on_off_plug_in_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, relay_handle);
+        ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay endpoint"));
+
+        relay_endpoint_id = endpoint::get_id(endpoint);
+        ESP_LOGI(TAG, "On/Off Plug-in Unit endpoint created with endpoint_id %d", relay_endpoint_id);
+    }
 
     /* Create Temperature Sensor endpoint to expose chip temperature */
     temperature_sensor::config_t temp_config;

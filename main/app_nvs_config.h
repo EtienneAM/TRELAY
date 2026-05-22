@@ -16,10 +16,18 @@ typedef enum {
     POWER_ON_OFF = 2,       // Always stay off
 } tled_power_on_t;
 
+// Device type options
+typedef enum {
+    DEVICE_TYPE_ON_OFF    = 0,  // Generic On/Off switch (plug-in unit)
+    DEVICE_TYPE_DOOR_LOCK = 1,  // Door lock
+} tled_device_type_t;
+
 // Configuration structure
 typedef struct {
     uint8_t gpio_pin;           // Relay GPIO pin
     uint8_t power_on_behavior;  // Power-on behavior (tled_power_on_t)
+    uint8_t device_type;        // Matter device type (tled_device_type_t)
+    uint16_t auto_revert_s;     // Auto-revert to off/locked after N seconds (0=disabled)
     char device_name[32];       // Custom device name
     uint8_t config_version;     // Config version for migration
     bool configured;            // True if config has been set
@@ -31,7 +39,9 @@ typedef struct {
 #define TLED_DEFAULT_GPIO_PIN       CONFIG_TRELAY_GPIO_PIN
 #define TLED_DEFAULT_DEVICE_NAME    "TRELAY"
 #define TLED_DEFAULT_POWER_ON       POWER_ON_RESTORE
-#define TLED_CONFIG_VERSION         1
+#define TLED_DEFAULT_DEVICE_TYPE    DEVICE_TYPE_ON_OFF
+#define TLED_DEFAULT_AUTO_REVERT_S  CONFIG_TRELAY_AUTO_REVERT_S
+#define TLED_CONFIG_VERSION         2
 
 /**
  * @brief Initialize the config module

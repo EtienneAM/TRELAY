@@ -156,6 +156,8 @@ static void print_help(void) {
     serial_write("  help              - Show this help\r\n");
     serial_write("  config            - Show current configuration\r\n");
     serial_write("  set gpio <n>      - Set relay GPIO pin (0-23)\r\n");
+    serial_write("  set type <t>      - Device type: on_off | door_lock\r\n");
+    serial_write("  set revert <n>    - Auto-revert seconds (door_lock: 1-10, on_off: 0-3600)\r\n");
     serial_write("  set name <name>   - Set device name\r\n");
     serial_write("  set poweron <m>   - Power-on behavior: restore, on, off\r\n");
     serial_write("  save              - Save config and reboot\r\n");
@@ -174,8 +176,12 @@ static void print_config(void) {
         case POWER_ON_OFF: poweron_str = "off"; break;
     }
 
+    const char *type_str = (cfg->device_type == DEVICE_TYPE_DOOR_LOCK) ? "door_lock" : "on_off";
+
     serial_write("\r\nCurrent configuration:\r\n");
     serial_printf("  gpio       = %d\r\n", cfg->gpio_pin);
+    serial_printf("  type       = %s\r\n", type_str);
+    serial_printf("  revert     = %d\r\n", cfg->auto_revert_s);
     serial_printf("  poweron    = %s\r\n", poweron_str);
     serial_printf("  name       = %s\r\n", cfg->device_name);
     serial_write("\r\n");
@@ -197,6 +203,44 @@ static void handle_set_command(const char *param, const char *value) {
         strncpy(cfg->device_name, value, sizeof(cfg->device_name) - 1);
         cfg->device_name[sizeof(cfg->device_name) - 1] = '\0';
         serial_printf("Set name = %s\r\n", cfg->device_name);
+    }
+    else if (strcmp(param, "type") == 0) {
+        if (strcmp(value, "on_off") == 0) {
+            cfg->device_type = DEVICE_TYPE_ON_OFF;
+            serial_write("Set type = on_off (generic switch/outlet)\r\n");
+            serial_write("Note: re-commission device after changing type\r\n");
+        } else if (strcmp(value, "door_lock") == 0) {
+            cfg->device_type = DEVICE_TYPE_DOOR_LOCK;
+            // Ensure auto_revert_s is within the mandatory 1-10s range for door_lock
+            if (cfg->auto_revert_s < 1 || cfg->auto_revert_s > 10) {
+                cfg->auto_revert_s = 5;
+                serial_write("Auto-revert set to 5s (door_lock requires 1-10s)\r\n");
+            }
+            serial_write("Set type = door_lock\r\n");
+            serial_write("Note: re-commission device after changing type\r\n");
+        } else {
+            serial_write("Error: type must be on_off or door_lock\r\n");
+        }
+    }
+    else if (strcmp(param, "revert") == 0) {
+        int n = atoi(value);
+        if (cfg->device_type == DEVICE_TYPE_DOOR_LOCK) {
+            if (n < 1 || n > 10) {
+                serial_write("Error: door_lock revert must be 1-10 seconds\r\n");
+                return;
+            }
+        } else {
+            if (n < 0 || n > 3600) {
+                serial_write("Error: revert must be 0-3600 seconds\r\n");
+                return;
+            }
+        }
+        cfg->auto_revert_s = (uint16_t)n;
+        if (n == 0) {
+            serial_write("Set revert = 0 (disabled)\r\n");
+        } else {
+            serial_printf("Set revert = %d seconds\r\n", n);
+        }
     }
     else if (strcmp(param, "poweron") == 0) {
         if (strcmp(value, "restore") == 0) {
