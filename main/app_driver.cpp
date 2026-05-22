@@ -41,8 +41,11 @@ typedef struct {
     uint8_t gpio_pin;
     bool active_high;           // true = relay on when GPIO high
     uint8_t power_on_behavior;
+    uint8_t device_type;        // DEVICE_TYPE_ON_OFF or DEVICE_TYPE_DOOR_LOCK
+    uint16_t auto_revert_s;     // Auto-revert delay in seconds (0=disabled)
     bool nvs_save_pending;
     TimerHandle_t nvs_save_timer;
+    TimerHandle_t auto_revert_timer;
 } relay_driver_t;
 
 // Static driver instance
@@ -51,8 +54,11 @@ static relay_driver_t s_relay_driver = {
     .gpio_pin = TRELAY_DEFAULT_GPIO_PIN,
     .active_high = true,
     .power_on_behavior = POWER_ON_RESTORE,
+    .device_type = DEVICE_TYPE_ON_OFF,
+    .auto_revert_s = 0,
     .nvs_save_pending = false,
     .nvs_save_timer = NULL,
+    .auto_revert_timer = NULL,
 };
 
 // --- GPIO control ---
@@ -100,6 +106,32 @@ static void nvs_save_timer_callback(TimerHandle_t timer)
     do_save_state_to_nvs();
 }
 
+// Auto-revert: turn relay off / re-lock after configured delay.
+// Runs in FreeRTOS timer context — schedules the Matter attribute update
+// on the CHIP stack thread.
+static void auto_revert_timer_callback(TimerHandle_t timer)
+{
+    relay_driver_t *driver = &s_relay_driver;
+    ESP_LOGI(TAG, "Auto-revert fired: returning to off/locked state");
+
+    relay_gpio_set(driver, false);
+    driver->power = false;
+    do_save_state_to_nvs();
+
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
+        if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
+            // LockState = 1 (Locked)
+            esp_matter_attr_val_t val = esp_matter_uint8(1);
+            attribute::update(relay_endpoint_id, DoorLock::Id,
+                              DoorLock::Attributes::LockState::Id, &val);
+        } else {
+            esp_matter_attr_val_t val = esp_matter_bool(false);
+            attribute::update(relay_endpoint_id, OnOff::Id,
+                              OnOff::Attributes::OnOff::Id, &val);
+        }
+    });
+}
+
 static void schedule_save_state_to_nvs(void)
 {
     s_relay_driver.nvs_save_pending = true;
@@ -138,18 +170,36 @@ static esp_err_t load_state_from_nvs(void)
 static void app_driver_button_toggle_cb(void *button_handle, void *usr_data)
 {
     ESP_LOGI(TAG, "Toggle button pressed");
+    relay_driver_t *driver = &s_relay_driver;
 
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
-        attribute_t *attribute = attribute::get(relay_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id);
-        if (attribute == NULL) {
-            ESP_LOGE(TAG, "Failed to get OnOff attribute");
-            return;
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
+        if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
+            // Toggle LockState: 1 (Locked) <-> 2 (Unlocked)
+            attribute_t *attr = attribute::get(relay_endpoint_id,
+                DoorLock::Id, DoorLock::Attributes::LockState::Id);
+            if (attr == NULL) {
+                ESP_LOGE(TAG, "Failed to get LockState attribute");
+                return;
+            }
+            esp_matter_attr_val_t val = esp_matter_invalid(NULL);
+            attribute::get_val(attr, &val);
+            uint8_t new_state = (val.val.u8 == 2) ? 1 : 2; // flip Locked<->Unlocked
+            esp_matter_attr_val_t new_val = esp_matter_uint8(new_state);
+            attribute::update(relay_endpoint_id, DoorLock::Id,
+                              DoorLock::Attributes::LockState::Id, &new_val);
+        } else {
+            attribute_t *attribute = attribute::get(relay_endpoint_id,
+                OnOff::Id, OnOff::Attributes::OnOff::Id);
+            if (attribute == NULL) {
+                ESP_LOGE(TAG, "Failed to get OnOff attribute");
+                return;
+            }
+            esp_matter_attr_val_t val = esp_matter_invalid(NULL);
+            attribute::get_val(attribute, &val);
+            val.val.b = !val.val.b;
+            attribute::update(relay_endpoint_id, OnOff::Id,
+                              OnOff::Attributes::OnOff::Id, &val);
         }
-
-        esp_matter_attr_val_t val = esp_matter_invalid(NULL);
-        attribute::get_val(attribute, &val);
-        val.val.b = !val.val.b;
-        attribute::update(relay_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
     });
 }
 
@@ -165,6 +215,20 @@ esp_err_t app_driver_light_set_power(app_driver_handle_t handle, bool power)
     driver->power = power;
     relay_gpio_set(driver, power);
     schedule_save_state_to_nvs();
+
+    // Manage auto-revert timer
+    if (driver->auto_revert_timer != NULL) {
+        if (power && driver->auto_revert_s > 0) {
+            // Start (or restart) one-shot timer when turning on
+            xTimerChangePeriod(driver->auto_revert_timer,
+                               pdMS_TO_TICKS((uint32_t)driver->auto_revert_s * 1000), 0);
+            xTimerStart(driver->auto_revert_timer, 0);
+            ESP_LOGI(TAG, "Auto-revert in %d seconds", driver->auto_revert_s);
+        } else {
+            // Cancel any pending revert when explicitly turning off
+            xTimerStop(driver->auto_revert_timer, 0);
+        }
+    }
 
     return ESP_OK;
 }
@@ -198,6 +262,12 @@ esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle,
         return app_driver_light_set_power(driver_handle, val->val.b);
     }
 
+    // Door lock: LockState 1=Locked (relay off), 2=Unlocked (relay on)
+    if (cluster_id == DoorLock::Id && attribute_id == DoorLock::Attributes::LockState::Id) {
+        bool unlocked = (val->val.u8 == 2);
+        return app_driver_light_set_power(driver_handle, unlocked);
+    }
+
     return ESP_OK;
 }
 
@@ -209,29 +279,42 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
     uint8_t power_on_behavior = config->power_on_behavior;
 
     if (load_state_from_nvs() == ESP_OK) {
-        // Apply power-on behavior override
-        switch (power_on_behavior) {
-            case POWER_ON_RESTORE:
-                break;
-            case POWER_ON_ON:
-                driver->power = true;
-                ESP_LOGI(TAG, "Power-on behavior: forcing ON");
-                break;
-            case POWER_ON_OFF:
-                driver->power = false;
-                ESP_LOGI(TAG, "Power-on behavior: forcing OFF");
-                break;
+        if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
+            // Door lock always starts in locked (safe) state regardless of power-on setting
+            driver->power = false;
+            ESP_LOGI(TAG, "Door lock: starting in LOCKED state");
+        } else {
+            switch (power_on_behavior) {
+                case POWER_ON_RESTORE:
+                    break;
+                case POWER_ON_ON:
+                    driver->power = true;
+                    ESP_LOGI(TAG, "Power-on behavior: forcing ON");
+                    break;
+                case POWER_ON_OFF:
+                    driver->power = false;
+                    ESP_LOGI(TAG, "Power-on behavior: forcing OFF");
+                    break;
+            }
         }
     }
 
     // Apply GPIO output immediately
     relay_gpio_set(driver, driver->power);
 
-    // Sync Matter OnOff attribute to match our state
-    esp_matter_attr_val_t val = esp_matter_bool(driver->power);
-    attribute::update(endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
+    // Sync the correct Matter attribute to match hardware state
+    if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
+        // LockState: 1=Locked, 2=Unlocked
+        esp_matter_attr_val_t val = esp_matter_uint8(driver->power ? 2 : 1);
+        attribute::update(endpoint_id, DoorLock::Id,
+                          DoorLock::Attributes::LockState::Id, &val);
+    } else {
+        esp_matter_attr_val_t val = esp_matter_bool(driver->power);
+        attribute::update(endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
+    }
 
-    ESP_LOGI(TAG, "Relay defaults applied: power=%d", driver->power);
+    ESP_LOGI(TAG, "Relay defaults applied: power=%d (type=%d, revert=%ds)",
+             driver->power, driver->device_type, driver->auto_revert_s);
     return ESP_OK;
 }
 
@@ -240,6 +323,8 @@ app_driver_handle_t app_driver_light_init(void)
     const tled_config_t *config = tled_config_get();
     s_relay_driver.gpio_pin = config->gpio_pin;
     s_relay_driver.power_on_behavior = config->power_on_behavior;
+    s_relay_driver.device_type = config->device_type;
+    s_relay_driver.auto_revert_s = config->auto_revert_s;
 
 #ifdef CONFIG_TRELAY_ACTIVE_HIGH
     s_relay_driver.active_high = true;
@@ -247,9 +332,11 @@ app_driver_handle_t app_driver_light_init(void)
     s_relay_driver.active_high = false;
 #endif
 
-    ESP_LOGI(TAG, "Initializing relay driver on GPIO%d (active %s)",
+    ESP_LOGI(TAG, "Initializing relay driver on GPIO%d (active %s, type=%d, revert=%ds)",
              s_relay_driver.gpio_pin,
-             s_relay_driver.active_high ? "HIGH" : "LOW");
+             s_relay_driver.active_high ? "HIGH" : "LOW",
+             s_relay_driver.device_type,
+             s_relay_driver.auto_revert_s);
 
     // Configure GPIO as output, default to relay-off state
     gpio_config_t io_conf = {};
@@ -277,6 +364,22 @@ app_driver_handle_t app_driver_light_init(void)
     );
     if (s_relay_driver.nvs_save_timer == NULL) {
         ESP_LOGW(TAG, "Failed to create NVS save timer, saves will be immediate");
+    }
+
+    // Create auto-revert timer (one-shot, only when revert is configured)
+    if (s_relay_driver.auto_revert_s > 0) {
+        s_relay_driver.auto_revert_timer = xTimerCreate(
+            "auto_revert",
+            pdMS_TO_TICKS((uint32_t)s_relay_driver.auto_revert_s * 1000),
+            pdFALSE,   // one-shot
+            NULL,
+            auto_revert_timer_callback
+        );
+        if (s_relay_driver.auto_revert_timer == NULL) {
+            ESP_LOGW(TAG, "Failed to create auto-revert timer");
+        } else {
+            ESP_LOGI(TAG, "Auto-revert timer configured: %d seconds", s_relay_driver.auto_revert_s);
+        }
     }
 
     ESP_LOGI(TAG, "Relay driver initialized");

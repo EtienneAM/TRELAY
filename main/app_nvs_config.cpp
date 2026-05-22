@@ -31,6 +31,8 @@ static void set_defaults(tled_config_t *config)
 {
     config->gpio_pin = TLED_DEFAULT_GPIO_PIN;
     config->power_on_behavior = TLED_DEFAULT_POWER_ON;
+    config->device_type = TLED_DEFAULT_DEVICE_TYPE;
+    config->auto_revert_s = TLED_DEFAULT_AUTO_REVERT_S;
     strncpy(config->device_name, TLED_DEFAULT_DEVICE_NAME, sizeof(config->device_name) - 1);
     config->device_name[sizeof(config->device_name) - 1] = '\0';
     config->config_version = TLED_CONFIG_VERSION;
@@ -47,6 +49,11 @@ static bool validate_config(const tled_config_t *config)
 
     if (config->power_on_behavior > POWER_ON_OFF) {
         ESP_LOGW(TAG, "Invalid power-on behavior: %d", config->power_on_behavior);
+        return false;
+    }
+
+    if (config->device_type > DEVICE_TYPE_DOOR_LOCK) {
+        ESP_LOGW(TAG, "Invalid device type: %d", config->device_type);
         return false;
     }
 
@@ -87,8 +94,19 @@ esp_err_t tled_config_init(void)
 
         if (err == ESP_OK && size == sizeof(tled_config_t)) {
             if (validate_config(&s_config)) {
-                ESP_LOGI(TAG, "Config loaded: GPIO%d, poweron=%d, name=%s",
-                         s_config.gpio_pin, s_config.power_on_behavior, s_config.device_name);
+                // Door lock requires auto-revert 1-10s — clamp silently rather than reset all config
+                if (s_config.device_type == DEVICE_TYPE_DOOR_LOCK) {
+                    if (s_config.auto_revert_s < 1) {
+                        ESP_LOGW(TAG, "door_lock: auto_revert_s was 0, defaulting to 5s");
+                        s_config.auto_revert_s = 5;
+                    } else if (s_config.auto_revert_s > 10) {
+                        ESP_LOGW(TAG, "door_lock: auto_revert_s %d clamped to 10s", s_config.auto_revert_s);
+                        s_config.auto_revert_s = 10;
+                    }
+                }
+                ESP_LOGI(TAG, "Config loaded: GPIO%d, type=%d, revert=%ds, poweron=%d, name=%s",
+                         s_config.gpio_pin, s_config.device_type, s_config.auto_revert_s,
+                         s_config.power_on_behavior, s_config.device_name);
                 s_initialized = true;
                 return ESP_OK;
             } else {

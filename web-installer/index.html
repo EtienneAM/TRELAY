@@ -930,6 +930,17 @@
                         <label for="gpioPin">GPIO Pin</label>
                         <input type="number" id="gpioPin" min="0" max="23" value="5">
                     </div>
+                    <div class="config-item">
+                        <label for="deviceType">Device Type</label>
+                        <select id="deviceType">
+                            <option value="on_off">On/Off Switch (generic outlet)</option>
+                            <option value="door_lock">Door Lock</option>
+                        </select>
+                    </div>
+                    <div class="config-item">
+                        <label for="autoRevert" id="autoRevertLabel">Auto-revert (seconds, 0=disabled)</label>
+                        <input type="number" id="autoRevert" min="0" max="3600" value="0">
+                    </div>
 
                     <div class="btn-row">
                         <button id="saveBtn" class="btn btn-success" disabled>Save</button>
@@ -1241,10 +1252,42 @@
                         case 'gpio':
                             document.getElementById('gpioPin').value = value.trim();
                             break;
+                        case 'type': {
+                            const sel = document.getElementById('deviceType');
+                            const v = value.trim();
+                            sel.value = (v === 'door_lock') ? 'door_lock' : 'on_off';
+                            applyDeviceTypeConstraints(sel.value);
+                            break;
+                        }
+                        case 'revert':
+                            document.getElementById('autoRevert').value = value.trim();
+                            break;
                     }
                 }
             }
         }
+
+        function applyDeviceTypeConstraints(type) {
+            const revertInput = document.getElementById('autoRevert');
+            const revertLabel = document.getElementById('autoRevertLabel');
+            if (type === 'door_lock') {
+                revertInput.min = 1;
+                revertInput.max = 10;
+                revertLabel.textContent = 'Auto-revert (seconds, 1-10 required)';
+                const v = parseInt(revertInput.value, 10);
+                if (isNaN(v) || v < 1 || v > 10) {
+                    revertInput.value = 5;
+                }
+            } else {
+                revertInput.min = 0;
+                revertInput.max = 3600;
+                revertLabel.textContent = 'Auto-revert (seconds, 0=disabled)';
+            }
+        }
+
+        document.getElementById('deviceType').addEventListener('change', (e) => {
+            applyDeviceTypeConstraints(e.target.value);
+        });
 
         connectBtn.addEventListener('click', async () => {
             if (port) {
@@ -1256,8 +1299,14 @@
 
         saveBtn.addEventListener('click', async () => {
             const gpioPin = document.getElementById('gpioPin').value;
+            const deviceType = document.getElementById('deviceType').value;
+            const autoRevert = document.getElementById('autoRevert').value;
 
             await sendCommand(`set gpio ${gpioPin}`);
+            await new Promise(r => setTimeout(r, 100));
+            await sendCommand(`set type ${deviceType}`);
+            await new Promise(r => setTimeout(r, 100));
+            await sendCommand(`set revert ${autoRevert}`);
             await new Promise(r => setTimeout(r, 100));
             await sendCommand('save');
         });
@@ -1272,8 +1321,14 @@
 
         saveRebootBtn.addEventListener('click', async () => {
             const gpioPin = document.getElementById('gpioPin').value;
+            const deviceType = document.getElementById('deviceType').value;
+            const autoRevert = document.getElementById('autoRevert').value;
 
             await sendCommand(`set gpio ${gpioPin}`);
+            await new Promise(r => setTimeout(r, 100));
+            await sendCommand(`set type ${deviceType}`);
+            await new Promise(r => setTimeout(r, 100));
+            await sendCommand(`set revert ${autoRevert}`);
             await new Promise(r => setTimeout(r, 100));
             await sendCommand('save');
             await new Promise(r => setTimeout(r, 200));
