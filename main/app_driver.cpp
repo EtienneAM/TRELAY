@@ -48,6 +48,11 @@ typedef struct {
     TimerHandle_t auto_revert_timer;
 } relay_driver_t;
 
+// Semaphore to trigger NVS writes from a background task.
+// Timer callbacks and Matter callbacks signal this; the dedicated task does
+// the actual flash write so the timer/CHIP threads never block on NVS.
+static SemaphoreHandle_t s_nvs_save_sem = NULL;
+
 // Static driver instance
 static relay_driver_t s_relay_driver = {
     .power = false,
@@ -100,11 +105,29 @@ static esp_err_t do_save_state_to_nvs(void)
     return err;
 }
 
+// Background task: waits on semaphore, performs the blocking NVS commit.
+// Priority 2 keeps it below Thread/Matter (typically 5-8) and serial (2).
+static void nvs_save_task(void *pvParameters)
+{
+    while (true) {
+        if (xSemaphoreTake(s_nvs_save_sem, portMAX_DELAY) == pdTRUE) {
+            do_save_state_to_nvs();
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));  // yield before re-checking
+    }
+}
+
 static void nvs_save_timer_callback(TimerHandle_t timer)
 {
-    ESP_LOGD(TAG, "NVS save timer fired");
-    do_save_state_to_nvs();
+    // Do NOT write NVS here — timer task must not block on flash.
+    // Signal the background task instead.
+    if (s_nvs_save_sem) {
+        xSemaphoreGive(s_nvs_save_sem);
+    }
 }
+
+// Forward declaration (definition follows schedule_save_state_to_nvs below)
+static void schedule_save_state_to_nvs(void);
 
 // Auto-revert: turn relay off / re-lock after configured delay.
 // Runs in FreeRTOS timer context — schedules the Matter attribute update
@@ -116,7 +139,8 @@ static void auto_revert_timer_callback(TimerHandle_t timer)
 
     relay_gpio_set(driver, false);
     driver->power = false;
-    do_save_state_to_nvs();
+    // Signal background NVS task — never write flash from the timer task.
+    schedule_save_state_to_nvs();
 
     chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
         if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
@@ -138,10 +162,13 @@ static void schedule_save_state_to_nvs(void)
 
     if (s_relay_driver.nvs_save_timer != NULL) {
         if (xTimerReset(s_relay_driver.nvs_save_timer, 0) != pdPASS) {
-            ESP_LOGW(TAG, "Failed to reset NVS timer, saving immediately");
-            do_save_state_to_nvs();
+            ESP_LOGW(TAG, "Failed to reset NVS timer, signalling background task");
+            if (s_nvs_save_sem) xSemaphoreGive(s_nvs_save_sem);
         }
+    } else if (s_nvs_save_sem) {
+        xSemaphoreGive(s_nvs_save_sem);
     } else {
+        // Semaphore not yet created (very early boot) — direct write is acceptable.
         do_save_state_to_nvs();
     }
 }
@@ -363,7 +390,18 @@ app_driver_handle_t app_driver_light_init(void)
         nvs_save_timer_callback
     );
     if (s_relay_driver.nvs_save_timer == NULL) {
-        ESP_LOGW(TAG, "Failed to create NVS save timer, saves will be immediate");
+        ESP_LOGW(TAG, "Failed to create NVS save timer");
+    }
+
+    // Create background NVS write task so timer/CHIP threads never block on flash.
+    s_nvs_save_sem = xSemaphoreCreateBinary();
+    if (s_nvs_save_sem != NULL) {
+        BaseType_t nvs_ret = xTaskCreate(nvs_save_task, "nvs_save", 3072, NULL, 2, NULL);
+        if (nvs_ret != pdPASS) {
+            ESP_LOGW(TAG, "Failed to create NVS save task");
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to create NVS save semaphore");
     }
 
     // Create auto-revert timer (one-shot, only when revert is configured)

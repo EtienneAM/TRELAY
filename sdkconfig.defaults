@@ -32,8 +32,25 @@ CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
 CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
 CONFIG_OPENTHREAD_CLI=n
 
-# Disable WiFi (Thread only)
+# Disable WiFi station and SoftAP (Thread only - WiFi never initialized)
+# Note: CONFIG_ESP_WIFI_ENABLED cannot be set to n on ESP32-C6 (forced by SOC_WIFI_SUPPORTED).
+# Dynamic buffers are only allocated on esp_wifi_init(), which we never call, so RAM is fine.
+# However, IRAM-opt flags still place WiFi code in precious IRAM even when unused.
+# Disable all WiFi IRAM opts to reclaim IRAM for OpenThread/Matter.
 CONFIG_ENABLE_WIFI_STATION=n
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_EXTRA_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_ESP_WIFI_SLP_IRAM_OPT=n
+
+# Power management - explicitly disabled.
+# Automatic light sleep / modem sleep would break Thread FTD responsiveness
+# (timer wakeup latency, radio duty cycling, CPU freq scaling all harmful for OT router).
+# BLE sleep also off to avoid commissioning delays.
+CONFIG_PM_ENABLE=n
+CONFIG_BT_LE_SLEEP_ENABLE=n
 
 # Disable lwip ipv6 autoconfig
 CONFIG_LWIP_IPV6_AUTOCONFIG=n
@@ -43,9 +60,6 @@ CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
 CONFIG_LWIP_MULTICAST_PING=y
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
-
-# Disable WiFi SoftAP (Thread only)
-CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
 # MDNS platform
 CONFIG_USE_MINIMAL_MDNS=n
@@ -66,6 +80,10 @@ CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
 # Button timing
 CONFIG_BUTTON_PERIOD_TIME_MS=20
 CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
+
+# FreeRTOS timer task stack - timer callbacks call ScheduleLambda (CHIP event post)
+# which needs more than the default 2048 bytes.
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=3072
 
 # Enable Matter shell for debugging
 CONFIG_ENABLE_CHIP_SHELL=y

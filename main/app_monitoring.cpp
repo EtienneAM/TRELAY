@@ -20,8 +20,15 @@ static const char *TAG = "tled_monitor";
 #define TEMP_WARNING_THRESHOLD 70.0f
 #define TEMP_CRITICAL_THRESHOLD 85.0f
 
-// Memory warning threshold (bytes)
-#define HEAP_WARNING_THRESHOLD 20000
+// Free heap warning threshold (bytes).
+// Matter CASE/PASE needs ~15-30 KB contiguous; warn well before that.
+#define HEAP_WARNING_THRESHOLD 40000
+
+// Fragmentation warning: warn when the largest free block is less than
+// this fraction of total free heap, indicating heavy fragmentation.
+// e.g. 50% means the largest block is under half the total free.
+#define HEAP_FRAG_WARN_PERCENT  50
+#define HEAP_FRAG_ERROR_PERCENT 25
 
 static temperature_sensor_handle_t s_temp_sensor = NULL;
 static bool s_temp_sensor_enabled = false;
@@ -67,15 +74,30 @@ void monitoring_log_health(void)
     int mins = (uptime_sec % 3600) / 60;
     int secs = uptime_sec % 60;
 
-    // Calculate heap usage
+    // Calculate heap usage and fragmentation
     size_t heap_used = s_initial_free_heap - free_heap;
+    size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+    // Fragmentation %: how much smaller is the largest contiguous block vs total free.
+    // 0% = perfectly defragmented; 100% = completely fragmented.
+    int frag_pct = (free_heap > 0)
+                   ? (int)(100 - (largest_block * 100 / free_heap))
+                   : 0;
 
-    ESP_LOGI(TAG, "Health: heap=%zu/%zu (min=%zu, used=%zu), temp=%.1fC, uptime=%02d:%02d:%02d",
-             free_heap, s_initial_free_heap, min_heap, heap_used, temp, hours, mins, secs);
+    ESP_LOGI(TAG, "Health: free=%zu (min=%zu, used=%zu), largest=%zu, frag=%d%%, temp=%.1fC, uptime=%02d:%02d:%02d",
+             free_heap, min_heap, heap_used, largest_block, frag_pct, temp, hours, mins, secs);
 
-    // Warnings
+    // Memory pressure warning
     if (free_heap < HEAP_WARNING_THRESHOLD) {
-        ESP_LOGW(TAG, "LOW MEMORY WARNING: Only %zu bytes free!", free_heap);
+        ESP_LOGW(TAG, "LOW MEMORY: only %zu bytes free (largest block %zu)", free_heap, largest_block);
+    }
+
+    // Fragmentation warnings (independent of total free heap)
+    if (frag_pct >= 100 - HEAP_FRAG_ERROR_PERCENT) {
+        ESP_LOGE(TAG, "HEAP CRITICALLY FRAGMENTED: %d%% frag, largest block only %zu bytes",
+                 frag_pct, largest_block);
+    } else if (frag_pct >= 100 - HEAP_FRAG_WARN_PERCENT) {
+        ESP_LOGW(TAG, "Heap fragmentation warning: %d%% frag, largest block %zu bytes",
+                 frag_pct, largest_block);
     }
 
     if (temp > TEMP_CRITICAL_THRESHOLD) {
@@ -130,7 +152,7 @@ esp_err_t monitoring_init(void)
     BaseType_t task_ret = xTaskCreate(
         health_check_task,
         "health_monitor",
-        2048,
+        3072,  // Needs headroom for ESP_LOGI with many args + heap_caps queries
         NULL,
         1,  // Low priority
         NULL
