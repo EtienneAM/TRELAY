@@ -364,7 +364,7 @@ extern "C" void app_main()
     monitoring_init();
 
     /* Start temperature update task (updates Matter attribute from sensor) */
-    BaseType_t task_ret = xTaskCreate(temp_update_task, "temp_update", 2048, NULL, 1, NULL);
+    BaseType_t task_ret = xTaskCreate(temp_update_task, "temp_update", 3072, NULL, 1, NULL);
     if (task_ret != pdPASS) {
         ESP_LOGW(TAG, "Failed to create temperature update task");
     } else {

@@ -279,7 +279,7 @@ esp_err_t serial_config_init(void) {
         "serial_config",
         4096,
         NULL,
-        5,
+        2,  // Below Thread/Matter tasks to avoid contention
         NULL
     );
 
