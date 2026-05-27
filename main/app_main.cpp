@@ -296,6 +296,9 @@ extern "C" void app_main()
     if (relay_cfg->device_type == DEVICE_TYPE_DOOR_LOCK) {
         door_lock::config_t dl_config;
         dl_config.door_lock.lock_state = nullable<uint8_t>(1); // Start locked
+        // ActuatorEnabled must be true or CHIP rejects all Lock/Unlock commands with status 0x01.
+        // The cluster defaults to 0 (false), which silently blocks every command.
+        dl_config.door_lock.actuator_enabled = true;
 
         endpoint_t *endpoint = door_lock::create(node, &dl_config, ENDPOINT_FLAG_NONE, relay_handle);
         ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
