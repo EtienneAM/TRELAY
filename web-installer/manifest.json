@@ -1,6 +1,6 @@
 {
   "name": "TRELAY - Matter Relay Controller",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "home_assistant_domain": "matter",
   "funding_url": "https://github.com/sponsors/your-username",
   "new_install_prompt_erase": true,
