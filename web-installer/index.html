@@ -831,7 +831,7 @@
     <div class="container">
         <header>
             <div class="logo-container">
-                <div class="logo">TRELAY<span class="version-badge">v0.1.0</span></div>
+                <div class="logo">TRELAY<span class="version-badge" id="fw-version">v?</span></div>
             </div>
             <p class="tagline">Matter <span>+</span> Thread <span>+</span> Relay</p>
         </header>
@@ -1097,6 +1097,15 @@
     </footer>
 
     <script>
+        // Load version from manifest.json
+        fetch('manifest.json')
+            .then(r => r.json())
+            .then(m => {
+                const el = document.getElementById('fw-version');
+                if (el && m.version) el.textContent = 'v' + m.version;
+            })
+            .catch(() => {}); // silently ignore if running without a server
+
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {

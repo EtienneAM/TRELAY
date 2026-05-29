@@ -33,6 +33,7 @@
 #include <app/server/Server.h>
 #include <setup_payload/OnboardingCodesUtil.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <app/clusters/door-lock-server/door-lock-server.h>
 
 // Version string from CMakeLists.txt
 #ifndef PROJECT_VER
@@ -55,6 +56,38 @@ using namespace chip::app::Clusters;
 void emberAfDoorLockClusterInitCallback(chip::EndpointId endpoint)
 {
     ESP_LOGI(TAG, "DoorLock cluster init on endpoint %d", endpoint);
+}
+
+// Override the weak default callbacks from door-lock-server-callback.cpp.
+// The defaults return false, causing every Lock/Unlock command to respond
+// with Status::Failure (0x01).  We write LockState here so the relay fires
+// via app_attribute_update_cb, then return true so CHIP sends Status::Success.
+bool emberAfPluginDoorLockOnDoorLockCommand(
+    chip::EndpointId endpointId,
+    const chip::app::DataModel::Nullable<chip::FabricIndex> & fabricIdx,
+    const chip::app::DataModel::Nullable<chip::NodeId> & nodeId,
+    const chip::Optional<chip::ByteSpan> & pinCode,
+    chip::app::Clusters::DoorLock::OperationErrorEnum & err)
+{
+    ESP_LOGI(TAG, "DoorLock: Lock command endpoint=%d", endpointId);
+    esp_matter_attr_val_t val = esp_matter_uint8(1); // DlLockState::kLocked
+    attribute::update(endpointId, DoorLock::Id, DoorLock::Attributes::LockState::Id, &val);
+    err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
+    return true;
+}
+
+bool emberAfPluginDoorLockOnDoorUnlockCommand(
+    chip::EndpointId endpointId,
+    const chip::app::DataModel::Nullable<chip::FabricIndex> & fabricIdx,
+    const chip::app::DataModel::Nullable<chip::NodeId> & nodeId,
+    const chip::Optional<chip::ByteSpan> & pinCode,
+    chip::app::Clusters::DoorLock::OperationErrorEnum & err)
+{
+    ESP_LOGI(TAG, "DoorLock: Unlock command endpoint=%d", endpointId);
+    esp_matter_attr_val_t val = esp_matter_uint8(2); // DlLockState::kUnlocked
+    attribute::update(endpointId, DoorLock::Id, DoorLock::Attributes::LockState::Id, &val);
+    err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
+    return true;
 }
 
 constexpr auto k_timeout_seconds = 300;
@@ -296,9 +329,7 @@ extern "C" void app_main()
     if (relay_cfg->device_type == DEVICE_TYPE_DOOR_LOCK) {
         door_lock::config_t dl_config;
         dl_config.door_lock.lock_state = nullable<uint8_t>(1); // Start locked
-        // ActuatorEnabled must be true or CHIP rejects all Lock/Unlock commands with status 0x01.
-        // The cluster defaults to 0 (false), which silently blocks every command.
-        dl_config.door_lock.actuator_enabled = true;
+        dl_config.door_lock.actuator_enabled = true; // CHIP's InitEndpoint forces this anyway
 
         endpoint_t *endpoint = door_lock::create(node, &dl_config, ENDPOINT_FLAG_NONE, relay_handle);
         ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
