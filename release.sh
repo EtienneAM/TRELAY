@@ -36,7 +36,6 @@ echo "  Version: ${VERSION} (build ${NEW_VER_NUMBER})"
 sed -i "s/set(PROJECT_VER \".*\")/set(PROJECT_VER \"${VERSION}\")/" CMakeLists.txt
 sed -i "s/set(PROJECT_VER_NUMBER [0-9]*)/set(PROJECT_VER_NUMBER ${NEW_VER_NUMBER})/" CMakeLists.txt
 sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" web-installer/manifest.json
-sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+<\/span>/v${VERSION}<\/span>/" web-installer/index.html
 
 echo "  Updated version strings"
 
@@ -52,7 +51,7 @@ echo "  Build complete"
 echo "  Firmware copied to web-installer"
 
 # Commit, tag, and push
-git add CMakeLists.txt web-installer/manifest.json web-installer/index.html web-installer/firmware/
+git add CMakeLists.txt web-installer/manifest.json web-installer/firmware/
 git commit -m "v${VERSION}: Release" || {
     echo ""
     echo "Nothing to commit — version may already be up to date."
