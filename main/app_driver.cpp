@@ -13,6 +13,7 @@
 
 #include <esp_matter.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <app/clusters/door-lock-server/door-lock-server.h>
 #include "app_driver.h"
 #include "app_config.h"
 #include "app_nvs_config.h"
@@ -144,10 +145,8 @@ static void auto_revert_timer_callback(TimerHandle_t timer)
 
     chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
         if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
-            // LockState = 1 (Locked)
-            esp_matter_attr_val_t val = esp_matter_uint8(1);
-            attribute::update(relay_endpoint_id, DoorLock::Id,
-                              DoorLock::Attributes::LockState::Id, &val);
+            // LockState is server-owned; use DoorLockServer API, not attribute::update.
+            DoorLockServer::Instance().SetLockState(relay_endpoint_id, DlLockState::kLocked);
         } else {
             esp_matter_attr_val_t val = esp_matter_bool(false);
             attribute::update(relay_endpoint_id, OnOff::Id,
@@ -201,19 +200,12 @@ static void app_driver_button_toggle_cb(void *button_handle, void *usr_data)
 
     chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
         if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
-            // Toggle LockState: 1 (Locked) <-> 2 (Unlocked)
-            attribute_t *attr = attribute::get(relay_endpoint_id,
-                DoorLock::Id, DoorLock::Attributes::LockState::Id);
-            if (attr == NULL) {
-                ESP_LOGE(TAG, "Failed to get LockState attribute");
-                return;
-            }
-            esp_matter_attr_val_t val = esp_matter_invalid(NULL);
-            attribute::get_val(attr, &val);
-            uint8_t new_state = (val.val.u8 == 2) ? 1 : 2; // flip Locked<->Unlocked
-            esp_matter_attr_val_t new_val = esp_matter_uint8(new_state);
-            attribute::update(relay_endpoint_id, DoorLock::Id,
-                              DoorLock::Attributes::LockState::Id, &new_val);
+            // Toggle relay and sync LockState via DoorLockServer (LockState is
+            // server-owned and not writable through the generic attribute::update path).
+            bool new_power = !driver->power;
+            app_driver_light_set_power((app_driver_handle_t)driver, new_power);
+            DlLockState new_dl_state = new_power ? DlLockState::kUnlocked : DlLockState::kLocked;
+            DoorLockServer::Instance().SetLockState(relay_endpoint_id, new_dl_state);
         } else {
             attribute_t *attribute = attribute::get(relay_endpoint_id,
                 OnOff::Id, OnOff::Attributes::OnOff::Id);
@@ -331,10 +323,12 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
 
     // Sync the correct Matter attribute to match hardware state
     if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
-        // LockState: 1=Locked, 2=Unlocked
-        esp_matter_attr_val_t val = esp_matter_uint8(driver->power ? 2 : 1);
-        attribute::update(endpoint_id, DoorLock::Id,
-                          DoorLock::Attributes::LockState::Id, &val);
+        // LockState is server-owned and not writable via attribute::update.
+        // Schedule on the CHIP thread via SetLockState.
+        chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, driver]() {
+            DlLockState state = driver->power ? DlLockState::kUnlocked : DlLockState::kLocked;
+            DoorLockServer::Instance().SetLockState(endpoint_id, state);
+        });
     } else {
         esp_matter_attr_val_t val = esp_matter_bool(driver->power);
         attribute::update(endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);

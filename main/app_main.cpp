@@ -46,6 +46,9 @@ static const char *TAG = "trelay_main";
 uint16_t relay_endpoint_id = 0;
 uint16_t temp_sensor_endpoint_id = 0;
 
+// File-scope relay handle so DoorLock callbacks can access the driver directly.
+static app_driver_handle_t s_relay_handle = NULL;
+
 using namespace esp_matter;
 using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
@@ -60,8 +63,12 @@ void emberAfDoorLockClusterInitCallback(chip::EndpointId endpoint)
 
 // Override the weak default callbacks from door-lock-server-callback.cpp.
 // The defaults return false, causing every Lock/Unlock command to respond
-// with Status::Failure (0x01).  We write LockState here so the relay fires
-// via app_attribute_update_cb, then return true so CHIP sends Status::Success.
+// with Status::Failure (0x01).
+//
+// LockState is a server-owned attribute — attribute::update() on it returns
+// UnsupportedWrite (0x86).  The correct path is DoorLockServer::SetLockState(),
+// which bypasses the write-permission check.  Relay GPIO is driven separately
+// via app_driver_light_set_power() (which also manages the auto-revert timer).
 bool emberAfPluginDoorLockOnDoorLockCommand(
     chip::EndpointId endpointId,
     const chip::app::DataModel::Nullable<chip::FabricIndex> & fabricIdx,
@@ -70,8 +77,8 @@ bool emberAfPluginDoorLockOnDoorLockCommand(
     chip::app::Clusters::DoorLock::OperationErrorEnum & err)
 {
     ESP_LOGI(TAG, "DoorLock: Lock command endpoint=%d", endpointId);
-    esp_matter_attr_val_t val = esp_matter_uint8(1); // DlLockState::kLocked
-    attribute::update(endpointId, DoorLock::Id, DoorLock::Attributes::LockState::Id, &val);
+    app_driver_light_set_power(s_relay_handle, false); // GPIO off = locked
+    DoorLockServer::Instance().SetLockState(endpointId, DlLockState::kLocked);
     err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
     return true;
 }
@@ -84,8 +91,8 @@ bool emberAfPluginDoorLockOnDoorUnlockCommand(
     chip::app::Clusters::DoorLock::OperationErrorEnum & err)
 {
     ESP_LOGI(TAG, "DoorLock: Unlock command endpoint=%d", endpointId);
-    esp_matter_attr_val_t val = esp_matter_uint8(2); // DlLockState::kUnlocked
-    attribute::update(endpointId, DoorLock::Id, DoorLock::Attributes::LockState::Id, &val);
+    app_driver_light_set_power(s_relay_handle, true);  // GPIO on = unlocked, starts auto-revert timer
+    DoorLockServer::Instance().SetLockState(endpointId, DlLockState::kUnlocked);
     err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
     return true;
 }
@@ -307,8 +314,8 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "Using config: relay on GPIO%d", config->gpio_pin);
 
     /* Initialize drivers */
-    app_driver_handle_t relay_handle = app_driver_light_init();
-    ABORT_APP_ON_FAILURE(relay_handle != NULL, ESP_LOGE(TAG, "Failed to initialize relay driver"));
+    s_relay_handle = app_driver_light_init();
+    ABORT_APP_ON_FAILURE(s_relay_handle != NULL, ESP_LOGE(TAG, "Failed to initialize relay driver"));
 
     app_driver_handle_t button_handle = app_driver_button_init();
     ABORT_APP_ON_FAILURE(button_handle != NULL, ESP_LOGE(TAG, "Failed to initialize button driver"));
@@ -331,7 +338,7 @@ extern "C" void app_main()
         dl_config.door_lock.lock_state = nullable<uint8_t>(1); // Start locked
         dl_config.door_lock.actuator_enabled = true; // CHIP's InitEndpoint forces this anyway
 
-        endpoint_t *endpoint = door_lock::create(node, &dl_config, ENDPOINT_FLAG_NONE, relay_handle);
+        endpoint_t *endpoint = door_lock::create(node, &dl_config, ENDPOINT_FLAG_NONE, s_relay_handle);
         ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
 
         relay_endpoint_id = endpoint::get_id(endpoint);
@@ -342,7 +349,7 @@ extern "C" void app_main()
         relay_config.on_off.on_off = TLED_DEFAULT_POWER;
         relay_config.on_off_lighting.start_up_on_off = nullptr;
 
-        endpoint_t *endpoint = on_off_plug_in_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, relay_handle);
+        endpoint_t *endpoint = on_off_plug_in_unit::create(node, &relay_config, ENDPOINT_FLAG_NONE, s_relay_handle);
         ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay endpoint"));
 
         relay_endpoint_id = endpoint::get_id(endpoint);
