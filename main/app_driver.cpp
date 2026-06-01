@@ -138,15 +138,18 @@ static void auto_revert_timer_callback(TimerHandle_t timer)
     relay_driver_t *driver = &s_relay_driver;
     ESP_LOGI(TAG, "Auto-revert fired: returning to off/locked state");
 
-    relay_gpio_set(driver, false);
-    driver->power = false;
-    // Signal background NVS task — never write flash from the timer task.
-    schedule_save_state_to_nvs();
-
+    // Move ALL state mutations onto the CHIP thread so they share the same
+    // execution context as the DoorLock command callbacks and button toggle.
+    // The timer daemon task itself touches no driver state.
     chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
+        relay_gpio_set(driver, false);
+        driver->power = false;
+        schedule_save_state_to_nvs();
+
         if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
-            // LockState is server-owned; use DoorLockServer API, not attribute::update.
-            DoorLockServer::Instance().SetLockState(relay_endpoint_id, DlLockState::kLocked);
+            if (!DoorLockServer::Instance().SetLockState(relay_endpoint_id, DlLockState::kLocked)) {
+                ESP_LOGW(TAG, "Auto-revert: SetLockState(Locked) failed");
+            }
         } else {
             esp_matter_attr_val_t val = esp_matter_bool(false);
             attribute::update(relay_endpoint_id, OnOff::Id,
@@ -205,7 +208,9 @@ static void app_driver_button_toggle_cb(void *button_handle, void *usr_data)
             bool new_power = !driver->power;
             app_driver_light_set_power((app_driver_handle_t)driver, new_power);
             DlLockState new_dl_state = new_power ? DlLockState::kUnlocked : DlLockState::kLocked;
-            DoorLockServer::Instance().SetLockState(relay_endpoint_id, new_dl_state);
+            if (!DoorLockServer::Instance().SetLockState(relay_endpoint_id, new_dl_state)) {
+                ESP_LOGW(TAG, "Button toggle: SetLockState failed");
+            }
         } else {
             attribute_t *attribute = attribute::get(relay_endpoint_id,
                 OnOff::Id, OnOff::Attributes::OnOff::Id);
@@ -327,7 +332,9 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
         // Schedule on the CHIP thread via SetLockState.
         chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, driver]() {
             DlLockState state = driver->power ? DlLockState::kUnlocked : DlLockState::kLocked;
-            DoorLockServer::Instance().SetLockState(endpoint_id, state);
+            if (!DoorLockServer::Instance().SetLockState(endpoint_id, state)) {
+                ESP_LOGW(TAG, "set_defaults: SetLockState failed");
+            }
         });
     } else {
         esp_matter_attr_val_t val = esp_matter_bool(driver->power);
