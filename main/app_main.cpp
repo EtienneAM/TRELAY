@@ -380,6 +380,12 @@ extern "C" void app_main()
         door_lock::config_t dl_config;
         dl_config.door_lock.lock_state = nullable<uint8_t>(static_cast<uint8_t>(DlLockState::kLocked));
         dl_config.door_lock.actuator_enabled = true; // CHIP's InitEndpoint forces this anyway
+        // Explicitly advertise Normal operating mode so controllers (e.g. Apple Home)
+        // don't receive UnsupportedAttribute (0x86) when reading attribute 0x0023/0x0024.
+        // Normal (0x00) means remote lock/unlock is always permitted.
+        // SupportedOperatingModes bitmap: bit 0 = Normal only (0x0001).
+        dl_config.door_lock.operating_mode = static_cast<uint8_t>(chip::app::Clusters::DoorLock::OperatingModeEnum::kNormal);
+        dl_config.door_lock.supported_operating_modes = 0x0001; // Normal only
 
         endpoint_t *endpoint = door_lock::create(node, &dl_config, ENDPOINT_FLAG_NONE, relay_handle);
         ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));

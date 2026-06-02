@@ -286,11 +286,10 @@ esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle,
         return app_driver_light_set_power(driver_handle, val->val.b);
     }
 
-    // Door lock: LockState 1=Locked (relay off), 2=Unlocked (relay on)
-    if (cluster_id == DoorLock::Id && attribute_id == DoorLock::Attributes::LockState::Id) {
-        bool unlocked = (val->val.u8 == 2);
-        return app_driver_light_set_power(driver_handle, unlocked);
-    }
+    // Door lock: relay is driven exclusively by the command callbacks
+    // (emberAfPluginDoorLockOnDoorLock/UnlockCommand).  LockState attribute
+    // updates are server-initiated reporting, not commands -- ignore them here
+    // to avoid driving the relay twice per operation.
 
     return ESP_OK;
 }
