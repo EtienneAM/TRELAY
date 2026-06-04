@@ -32,7 +32,9 @@ static void set_defaults(tled_config_t *config)
     config->gpio_pin = TLED_DEFAULT_GPIO_PIN;
     config->power_on_behavior = TLED_DEFAULT_POWER_ON;
     config->device_type = TLED_DEFAULT_DEVICE_TYPE;
-    config->auto_revert_s = TLED_DEFAULT_AUTO_REVERT_S;
+    config->auto_revert_s = (TLED_DEFAULT_DEVICE_TYPE == DEVICE_TYPE_DOOR_LOCK)
+                            ? TLED_DEFAULT_AUTO_RELOCK_S
+                            : TLED_DEFAULT_AUTO_REVERT_S;
     strncpy(config->device_name, TLED_DEFAULT_DEVICE_NAME, sizeof(config->device_name) - 1);
     config->device_name[sizeof(config->device_name) - 1] = '\0';
     config->config_version = TLED_CONFIG_VERSION;

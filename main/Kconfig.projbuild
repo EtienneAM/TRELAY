@@ -26,13 +26,23 @@ menu "TRELAY Configuration"
             Can be changed at runtime via serial: set type on_off | door_lock
 
     config TRELAY_AUTO_REVERT_S
-        int "Auto-revert to off/locked after N seconds (0=disabled)"
+        int "On/Off switch: auto-revert to off after N seconds (0=disabled)"
         default 0
         range 0 3600
         help
-            When enabled, the relay automatically turns off (or re-locks)
-            N seconds after being turned on (or unlocked).
-            Useful for door buzzers: unlock for 5 seconds then re-lock.
+            For the on_off switch device type only.
+            When enabled, the relay automatically turns off N seconds after being turned on.
             0 disables auto-revert. Can be changed at runtime via serial: set revert <n>
+
+    config TRELAY_AUTO_RELOCK_TIME_S
+        int "Door lock: AutoRelockTime in seconds (1-10)"
+        default 3
+        range 1 10
+        help
+            Default value for the Matter AutoRelockTime attribute when using the
+            door_lock device type. The lock will automatically re-lock this many
+            seconds after being unlocked. Clamped to [1, 10] at runtime.
+            This sets the compiled-in default; users can override via the serial
+            console (set revert <n>) or via a Matter controller.
 
 endmenu

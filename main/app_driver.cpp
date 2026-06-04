@@ -136,25 +136,16 @@ static void schedule_save_state_to_nvs(void);
 static void auto_revert_timer_callback(TimerHandle_t timer)
 {
     relay_driver_t *driver = &s_relay_driver;
-    ESP_LOGI(TAG, "Auto-revert fired: returning to off/locked state");
+    ESP_LOGI(TAG, "Auto-revert fired: returning to off state");
 
-    // Move ALL state mutations onto the CHIP thread so they share the same
-    // execution context as the DoorLock command callbacks and button toggle.
-    // The timer daemon task itself touches no driver state.
     chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
         relay_gpio_set(driver, false);
         driver->power = false;
         schedule_save_state_to_nvs();
 
-        if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
-            if (!DoorLockServer::Instance().SetLockState(relay_endpoint_id, DlLockState::kLocked)) {
-                ESP_LOGW(TAG, "Auto-revert: SetLockState(Locked) failed");
-            }
-        } else {
-            esp_matter_attr_val_t val = esp_matter_bool(false);
-            attribute::update(relay_endpoint_id, OnOff::Id,
-                              OnOff::Attributes::OnOff::Id, &val);
-        }
+        esp_matter_attr_val_t val = esp_matter_bool(false);
+        attribute::update(relay_endpoint_id, OnOff::Id,
+                          OnOff::Attributes::OnOff::Id, &val);
     });
 }
 
@@ -203,11 +194,10 @@ static void app_driver_button_toggle_cb(void *button_handle, void *usr_data)
 
     chip::DeviceLayer::SystemLayer().ScheduleLambda([driver]() {
         if (driver->device_type == DEVICE_TYPE_DOOR_LOCK) {
-            // Toggle relay and sync LockState via DoorLockServer (LockState is
-            // server-owned and not writable through the generic attribute::update path).
-            bool new_power = !driver->power;
-            app_driver_light_set_power((app_driver_handle_t)driver, new_power);
-            DlLockState new_dl_state = new_power ? DlLockState::kUnlocked : DlLockState::kLocked;
+            // Toggle lock state via DoorLockServer so the attribute update path
+            // (app_driver_attribute_update) drives the relay.  This also correctly
+            // triggers the CHIP auto-relock timer when transitioning to Unlocked.
+            DlLockState new_dl_state = driver->power ? DlLockState::kLocked : DlLockState::kUnlocked;
             if (!DoorLockServer::Instance().SetLockState(relay_endpoint_id, new_dl_state)) {
                 ESP_LOGW(TAG, "Button toggle: SetLockState failed");
             }
@@ -286,10 +276,37 @@ esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle,
         return app_driver_light_set_power(driver_handle, val->val.b);
     }
 
-    // Door lock: relay is driven exclusively by the command callbacks
-    // (emberAfPluginDoorLockOnDoorLock/UnlockCommand).  LockState attribute
-    // updates are server-initiated reporting, not commands -- ignore them here
-    // to avoid driving the relay twice per operation.
+    if (cluster_id == DoorLock::Id) {
+        // LockState: drive relay to match requested state.
+        // Triggered by DoorLockServer::SetLockState() (remote command, button toggle,
+        // and CHIP's built-in auto-relock timer) via the Ember write path.
+        if (attribute_id == DoorLock::Attributes::LockState::Id) {
+            bool power = (val->val.u8 == chip::to_underlying(DlLockState::kUnlocked));
+            relay_gpio_set(driver, power);
+            driver->power = power;
+            schedule_save_state_to_nvs();
+            return ESP_OK;
+        }
+
+        // AutoRelockTime: clamp writes to [1, 10] seconds in-place.
+        // Mutating val before returning ESP_OK causes the stack to store the
+        // clamped value, so the controller's slider snaps back to the boundary
+        // rather than showing an error.
+        if (attribute_id == DoorLock::Attributes::AutoRelockTime::Id) {
+            constexpr uint32_t kMinRelockS = 1;
+            constexpr uint32_t kMaxRelockS = 10;
+            uint32_t clamped = val->val.u32;
+            if (clamped < kMinRelockS) clamped = kMinRelockS;
+            if (clamped > kMaxRelockS) clamped = kMaxRelockS;
+            if (clamped != val->val.u32) {
+                ESP_LOGI(TAG, "AutoRelockTime clamped %lu → %lu s",
+                         (unsigned long)val->val.u32, (unsigned long)clamped);
+                val->val.u32 = clamped;
+            }
+            // No need to cache: CHIP reads the attribute directly when arming the relock timer.
+            return ESP_OK;
+        }
+    }
 
     return ESP_OK;
 }
@@ -404,8 +421,12 @@ app_driver_handle_t app_driver_light_init(void)
         ESP_LOGW(TAG, "Failed to create NVS save semaphore");
     }
 
-    // Create auto-revert timer (one-shot, only when revert is configured)
-    if (s_relay_driver.auto_revert_s > 0) {
+    // Create auto-revert timer — on/off switch only.
+    // For door_lock, the CHIP door-lock-server reads the AutoRelockTime attribute
+    // after every successful Unlock and schedules its own internal timer, so no
+    // FreeRTOS timer is needed here.
+    if (s_relay_driver.device_type != DEVICE_TYPE_DOOR_LOCK &&
+        s_relay_driver.auto_revert_s > 0) {
         s_relay_driver.auto_revert_timer = xTimerCreate(
             "auto_revert",
             pdMS_TO_TICKS((uint32_t)s_relay_driver.auto_revert_s * 1000),

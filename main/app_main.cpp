@@ -45,125 +45,19 @@ static const char *TAG = "trelay_main";
 
 // Global endpoint IDs
 uint16_t relay_endpoint_id = 0;
-uint16_t temp_sensor_endpoint_id = 0;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
-// Required cluster init callback when DoorLock endpoint is used.
-// esp-matter legacy layer references this symbol at link time.
+constexpr auto k_timeout_seconds = 300;
+
+// Required symbol: esp-matter's legacy cluster layer puts this in its
+// door_lock function_list and the linker requires it to be defined.
 void emberAfDoorLockClusterInitCallback(chip::EndpointId endpoint)
 {
     ESP_LOGI(TAG, "DoorLock cluster init on endpoint %d", endpoint);
-}
-
-// Override the weak default callbacks from door-lock-server-callback.cpp.
-// The defaults return false, causing every Lock/Unlock command to respond
-// with Status::Failure (0x01).
-//
-// LockState is a server-owned attribute — attribute::update() on it returns
-// UnsupportedWrite (0x86).  The correct path is DoorLockServer::SetLockState(),
-// which bypasses the write-permission check.  Relay GPIO is driven separately
-// via app_driver_light_set_power() (which also manages the auto-revert timer).
-//
-// fabricIdx, nodeId, and pinCode are intentionally unused.  Matter access
-// control is enforced by the CHIP stack before these callbacks are invoked,
-// so by the time we reach here the command is already authorised.  This
-// device does not implement PIN credentials, user codes, or lock schedules,
-// and there are no plans to add them.
-bool emberAfPluginDoorLockOnDoorLockCommand(
-    chip::EndpointId endpointId,
-    const chip::app::DataModel::Nullable<chip::FabricIndex> & fabricIdx,
-    const chip::app::DataModel::Nullable<chip::NodeId> & nodeId,
-    const chip::Optional<chip::ByteSpan> & pinCode,
-    chip::app::Clusters::DoorLock::OperationErrorEnum & err)
-{
-    ESP_LOGI(TAG, "DoorLock: Lock command endpoint=%d", endpointId);
-    auto handle = (app_driver_handle_t)get_priv_data(endpointId);
-    if (app_driver_light_set_power(handle, false) != ESP_OK) {
-        err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
-        return false;
-    }
-    if (!DoorLockServer::Instance().SetLockState(endpointId, DlLockState::kLocked)) {
-        ESP_LOGE(TAG, "DoorLock: SetLockState(Locked) failed");
-        err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
-        return false;
-    }
-    err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
-    return true;
-}
-
-bool emberAfPluginDoorLockOnDoorUnlockCommand(
-    chip::EndpointId endpointId,
-    const chip::app::DataModel::Nullable<chip::FabricIndex> & fabricIdx,
-    const chip::app::DataModel::Nullable<chip::NodeId> & nodeId,
-    const chip::Optional<chip::ByteSpan> & pinCode,
-    chip::app::Clusters::DoorLock::OperationErrorEnum & err)
-{
-    ESP_LOGI(TAG, "DoorLock: Unlock command endpoint=%d", endpointId);
-    auto handle = (app_driver_handle_t)get_priv_data(endpointId);
-    if (app_driver_light_set_power(handle, true) != ESP_OK) {
-        err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
-        return false;
-    }
-    if (!DoorLockServer::Instance().SetLockState(endpointId, DlLockState::kUnlocked)) {
-        ESP_LOGE(TAG, "DoorLock: SetLockState(Unlocked) failed");
-        err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
-        return false;
-    }
-    err = chip::app::Clusters::DoorLock::OperationErrorEnum::kUnspecified;
-    return true;
-}
-
-constexpr auto k_timeout_seconds = 300;
-
-// Signalled by app_event_cb when kServerReady fires.
-static SemaphoreHandle_t s_matter_started_sem = NULL;
-
-// Temperature update interval (5 seconds)
-#define TEMP_UPDATE_INTERVAL_MS 5000
-
-// Must match min_measured_value / max_measured_value set on the endpoint
-static constexpr int16_t TEMP_MIN_MEASURED_VALUE = -1000;  // -10.00°C
-static constexpr int16_t TEMP_MAX_MEASURED_VALUE =  8000;  //  80.00°C
-
-// Task to periodically update the temperature attribute
-static void temp_update_task(void *pvParameters)
-{
-    // Wait until the Matter server is fully ready before touching attributes.
-    xSemaphoreTake(s_matter_started_sem, portMAX_DELAY);
-
-    while (true) {
-        float temp = monitoring_get_temperature();
-
-        // Only update if we got a valid reading
-        if (temp > -900.0f) {
-            uint16_t endpoint_id = temp_sensor_endpoint_id;
-            // Convert to 0.01°C units and clamp to the cluster's declared range
-            int16_t temp_value = static_cast<int16_t>(temp * 100);
-            if (temp_value < TEMP_MIN_MEASURED_VALUE) temp_value = TEMP_MIN_MEASURED_VALUE;
-            if (temp_value > TEMP_MAX_MEASURED_VALUE) temp_value = TEMP_MAX_MEASURED_VALUE;
-
-            // Schedule the attribute update on the Matter thread
-            chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, temp_value]() {
-                attribute_t *attr = attribute::get(endpoint_id,
-                                                   TemperatureMeasurement::Id,
-                                                   TemperatureMeasurement::Attributes::MeasuredValue::Id);
-                if (attr) {
-                    esp_matter_attr_val_t val = esp_matter_nullable_int16(temp_value);
-                    esp_err_t err = attribute::update(endpoint_id, TemperatureMeasurement::Id,
-                                                      TemperatureMeasurement::Attributes::MeasuredValue::Id, &val);
-                    if (err != ESP_OK) {
-                        ESP_LOGW(TAG, "Temperature attribute update failed: %d", err);
-                    }
-                }
-            });
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(TEMP_UPDATE_INTERVAL_MS));
-    }
 }
 
 // Check if boot button is held
@@ -278,7 +172,6 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         ESP_LOGI(TAG, "Matter server ready");
-        xSemaphoreGive(s_matter_started_sem);
         break;
 
     default:
@@ -379,6 +272,7 @@ extern "C" void app_main()
     if (relay_cfg->device_type == DEVICE_TYPE_DOOR_LOCK) {
         door_lock::config_t dl_config;
         dl_config.door_lock.lock_state = nullable<uint8_t>(static_cast<uint8_t>(DlLockState::kLocked));
+        dl_config.door_lock.lock_type  = chip::to_underlying(chip::app::Clusters::DoorLock::DlLockType::kDeadLatch);
         dl_config.door_lock.actuator_enabled = true; // CHIP's InitEndpoint forces this anyway
         // Explicitly advertise Normal operating mode so controllers (e.g. Apple Home)
         // don't receive UnsupportedAttribute (0x86) when reading attribute 0x0023/0x0024.
@@ -392,6 +286,21 @@ extern "C" void app_main()
 
         relay_endpoint_id = endpoint::get_id(endpoint);
         ESP_LOGI(TAG, "Door Lock endpoint created with endpoint_id %d", relay_endpoint_id);
+
+        // Add the optional AutoRelockTime attribute (Matter 1.3, DoorLock cluster, attr 0x0023).
+        // Value comes from NVS-backed config (default: CONFIG_TRELAY_AUTO_RELOCK_TIME_S).
+        // Clamped to [1, 10] s in app_driver_attribute_update (PRE_UPDATE on AutoRelockTime).
+        // The CHIP door-lock-server reads this attribute after every successful Unlock command
+        // and schedules its own auto-relock timer, so no custom FreeRTOS timer is needed.
+        uint32_t auto_relock_s = relay_cfg->auto_revert_s;
+        if (auto_relock_s < 1 || auto_relock_s > 10) {
+            ESP_LOGW(TAG, "auto_revert_s %lu out of [1,10], clamping to 3",
+                     (unsigned long)auto_relock_s);
+            auto_relock_s = 3;
+        }
+        cluster_t *dl_cluster = cluster::get(endpoint, DoorLock::Id);
+        cluster::door_lock::attribute::create_auto_relock_time(dl_cluster, auto_relock_s);
+        ESP_LOGI(TAG, "AutoRelockTime set to %lu s", (unsigned long)auto_relock_s);
     } else {
         /* Default: Generic On/Off Plug-in Unit (switch/outlet) */
         on_off_plug_in_unit::config_t relay_config;
@@ -404,20 +313,6 @@ extern "C" void app_main()
         relay_endpoint_id = endpoint::get_id(endpoint);
         ESP_LOGI(TAG, "On/Off Plug-in Unit endpoint created with endpoint_id %d", relay_endpoint_id);
     }
-
-    /* Create Temperature Sensor endpoint to expose chip temperature */
-    temperature_sensor::config_t temp_config;
-    // ESP32-C6 internal sensor range: -10°C to 80°C (in 0.01°C units)
-    temp_config.temperature_measurement.min_measured_value = nullable<int16_t>(TEMP_MIN_MEASURED_VALUE);
-    temp_config.temperature_measurement.max_measured_value = nullable<int16_t>(TEMP_MAX_MEASURED_VALUE);
-    // Initial value will be set when first reading comes in
-    temp_config.temperature_measurement.measured_value = nullable<int16_t>();
-
-    endpoint_t *temp_endpoint = temperature_sensor::create(node, &temp_config, ENDPOINT_FLAG_NONE, nullptr);
-    ABORT_APP_ON_FAILURE(temp_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create temperature sensor endpoint"));
-
-    temp_sensor_endpoint_id = endpoint::get_id(temp_endpoint);
-    ESP_LOGI(TAG, "Temperature Sensor created with endpoint_id %d", temp_sensor_endpoint_id);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */
@@ -452,18 +347,6 @@ extern "C" void app_main()
 
     /* Initialize health monitoring (watchdog, heap, thermal) */
     monitoring_init();
-
-    /* Create semaphore the temp task blocks on until kServerReady fires */
-    s_matter_started_sem = xSemaphoreCreateBinary();
-    ABORT_APP_ON_FAILURE(s_matter_started_sem != NULL, ESP_LOGE(TAG, "Failed to create matter-started semaphore"));
-
-    /* Start temperature update task (updates Matter attribute from sensor) */
-    BaseType_t task_ret = xTaskCreate(temp_update_task, "temp_update", 3072, NULL, 1, NULL);
-    if (task_ret != pdPASS) {
-        ESP_LOGW(TAG, "Failed to create temperature update task");
-    } else {
-        ESP_LOGI(TAG, "Temperature update task started (interval: %dms)", TEMP_UPDATE_INTERVAL_MS);
-    }
 
     ESP_LOGI(TAG, "TRELAY initialization complete. Waiting for commissioning...");
     ESP_LOGI(TAG, "Serial config available - connect via USB and type 'help'");
